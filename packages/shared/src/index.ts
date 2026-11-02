@@ -208,3 +208,65 @@ export interface HealthCheckResponse {
   uptimeSeconds: number;
   dependencies?: Record<string, { status: 'up' | 'down'; latencyMs?: number }>;
 }
+
+
+// =============================================================================
+// Domain 15: Assessment Integrity & Proctoring Telemetry
+// =============================================================================
+export type SessionEventType =
+  | 'TAB_HIDDEN'
+  | 'TAB_VISIBLE'
+  | 'WINDOW_BLUR'
+  | 'WINDOW_FOCUS'
+  | 'PASTE_EVENT'
+  | 'CODE_BURST'
+  | 'TEST_EXECUTION'
+  | 'AI_QUERY';
+
+export type LineCountBucket = '1-5' | '6-15' | '16-50' | '50+';
+
+export interface SessionEventMetadata {
+  durationMs?: number;
+  charCount?: number;
+  lineCountBucket?: LineCountBucket;
+  lineCount?: number;
+  targetFile?: string;
+  triggerSource?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface SessionEvent {
+  id: string;
+  sessionId: string;
+  assessmentId: string;
+  candidateId: string;
+  eventType: SessionEventType;
+  timestamp: string;
+  metadata?: SessionEventMetadata;
+}
+
+export type AnomalyType =
+  | 'RAPID_BULK_PASTE'
+  | 'PROLONGED_TAB_INACTIVITY'
+  | 'FREQUENT_CONTEXT_SWITCHING';
+
+export interface IntegrityAnomaly {
+  type: AnomalyType;
+  severity: 'low' | 'medium' | 'high';
+  description: string;
+  timestamp: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IntegritySummary {
+  sessionId: string;
+  assessmentId: string;
+  candidateId: string;
+  totalTabHiddenDurationMs: number;
+  tabSwitchCount: number;
+  bulkPasteCount: number;
+  totalCharsPasted: number;
+  anomalies: IntegrityAnomaly[];
+  integrityScore: number; // 0 - 100 advisory score
+  evaluatedAt: string;
+}

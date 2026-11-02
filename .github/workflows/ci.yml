@@ -1,0 +1,145 @@
+name: RepoDojo Monorepo CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # 1. Security Gate: Full Git History Secret Scanning & CVE Audits (ADR 12.3)
+  # ============================================================================
+  security-audit:
+    name: Security & Secret Audits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret Scanning (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js 22 & pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Node Dependency Vulnerability Audit
+        run: pnpm audit --audit-level=high || true
+
+  # ============================================================================
+  # 2. Quality Gate: Linting & Static Typing (ADR 2.3)
+  # ============================================================================
+  lint-and-typecheck:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 & pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Python 3.12 & uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          python-version: "3.12"
+
+      - name: Install Monorepo Node Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python Dependencies
+        run: |
+          cd apps/ai-service
+          uv sync --frozen
+
+      - name: Compile Shared Types
+        run: pnpm --filter @repodojo/shared build
+
+      - name: TypeScript Static Typecheck
+        run: pnpm turbo run typecheck
+
+      - name: Python Ruff Linter & Format Check
+        run: |
+          cd apps/ai-service
+          uv run ruff check .
+          uv run ruff format --check .
+
+  # ============================================================================
+  # 3. Verification Gate: Monorepo Automated Tests (Vitest, Jest, Pytest)
+  # ============================================================================
+  test:
+    name: Automated Unit & Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 & pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Python 3.12 & uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Shared Contracts
+        run: pnpm --filter @repodojo/shared build
+
+      - name: Run Web Frontend Tests (Vitest)
+        run: pnpm --filter @repodojo/web test
+
+      - name: Run Express Backend Tests (Jest)
+        run: pnpm --filter @repodojo/api test
+
+      - name: Run Python AI Service Tests (pytest)
+        run: |
+          cd apps/ai-service
+          uv sync --frozen
+          uv run pytest
+
+  # ============================================================================
+  # 4. Build Gate: Turborepo Monorepo Build Verification
+  # ============================================================================
+  build:
+    name: Monorepo Build Verification
+    needs: [lint-and-typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22 & pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Turborepo Build
+        run: pnpm run build

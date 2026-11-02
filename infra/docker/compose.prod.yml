@@ -1,0 +1,169 @@
+# ==============================================================================
+# RepoDojo Production Topology — OCI Always Free ARM64 Control Plane VM (4 GB RAM)
+# Architecture Decision: ADR 14.1 ($0/mo Free-Tier Topology) & ADR 12.1 (5 Trust Zones)
+# ==============================================================================
+
+name: repodojo-control-plane
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Edge Reverse Proxy (Caddy 2 with Automatic Let's Encrypt TLS)
+  # ----------------------------------------------------------------------------
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: repodojo-prod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 QUIC
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge_network
+      - internal_network
+    environment:
+      DOMAIN: ${DOMAIN:-repodojo.com}
+      PREVIEW_DOMAIN: ${PREVIEW_DOMAIN:-repodojo-preview.net}
+      ACME_EMAIL: ${ACME_EMAIL:-ops@repodojo.com}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # 2. Node.js Express Control Plane API (Gateway, Auth, Sessions, Evaluator)
+  # ----------------------------------------------------------------------------
+  api:
+    image: ${GHCR_REGISTRY:-ghcr.io/srijan4o4}/repodojo-api:${IMAGE_TAG:-latest}
+    container_name: repodojo-prod-api
+    restart: unless-stopped
+    env_file:
+      - ../../.env.production
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      AI_SERVICE_URL: http://ai-service:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - internal_network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/livez"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ----------------------------------------------------------------------------
+  # 3. Python FastAPI AI Service (Guarded Mentor, Context Assembly, NetworkX)
+  # ----------------------------------------------------------------------------
+  ai-service:
+    image: ${GHCR_REGISTRY:-ghcr.io/srijan4o4}/repodojo-ai-service:${IMAGE_TAG:-latest}
+    container_name: repodojo-prod-ai
+    restart: unless-stopped
+    env_file:
+      - ../../.env.production
+    environment:
+      PORT: 8000
+      PYTHONUNBUFFERED: 1
+    networks:
+      - internal_network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/livez"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ----------------------------------------------------------------------------
+  # 4. Redis Queue & Ephemeral State Store (BullMQ Job References & Rate Limiting)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: repodojo-prod-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory 192mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal_network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 5. Janitor Daemon (Reclaims Orphaned Sandboxes & Prunes Dangling Resources)
+  # ----------------------------------------------------------------------------
+  janitor:
+    image: docker:27-cli-alpine
+    container_name: repodojo-prod-janitor
+    restart: unless-stopped
+    command: >
+      sh -c '
+        echo "[Janitor] Started container lifecycle janitor daemon...";
+        while true; do
+          docker container prune -f --filter "until=30m" > /dev/null 2>&1;
+          docker volume prune -f --filter "label!=repodojo.keep=true" > /dev/null 2>&1;
+          docker network prune -f > /dev/null 2>&1;
+          sleep 600;
+        done
+      '
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128M
+
+networks:
+  # Public Ingress Zone (Decision 12.1 Zone 1)
+  edge_network:
+    name: repodojo-edge
+    driver: bridge
+  # Private Isolated Platform Zone (Decision 12.1 Zone 2)
+  internal_network:
+    name: repodojo-internal
+    driver: bridge
+    internal: true
+
+volumes:
+  caddy_data:
+    name: repodojo-caddy-data
+  caddy_config:
+    name: repodojo-caddy-config
+  redis_data:
+    name: repodojo-redis-data
