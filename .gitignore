@@ -10,6 +10,7 @@ __pycache__/
 dist/
 build/
 .turbo/
+*.tsbuildinfo
 
 # Environment Variables & Secrets (CRITICAL)
 .env

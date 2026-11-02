@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useWorkspaceStore } from '../../stores/workspace.store.js';
+import { useAIAssistantStore } from '../../stores/ai-assistant.store.js';
 import { TabBar } from '../editor/TabBar.js';
 import { CodeEditor } from '../editor/CodeEditor.js';
 import { DiffViewer } from '../editor/DiffViewer.js';
 import { FileTree } from '../filetree/FileTree.js';
 import { ChangesPanel } from '../changes/ChangesPanel.js';
 import { ProblemsPanel } from '../problems/ProblemsPanel.js';
+import { AIAssistantPanel } from '../ai/AIAssistantPanel.js';
 import {
   Files,
   GitCompare,
@@ -25,6 +27,8 @@ export function WorkspaceLayout() {
   const setSidebarTab = useWorkspaceStore((state) => state.setSidebarTab);
   const getModifiedFiles = useWorkspaceStore((state) => state.getModifiedFiles);
   const flushPendingSaves = useWorkspaceStore((state) => state.flushPendingSaves);
+  const isAIOpen = useAIAssistantStore((state) => state.isOpen);
+  const toggleAIOpen = useAIAssistantStore((state) => state.toggleOpen);
 
   // Authoritative countdown timer (synchronizing 60 minutes)
   const [secondsRemaining, setSecondsRemaining] = useState(3582); // ~59 mins 42s
@@ -168,8 +172,13 @@ export function WorkspaceLayout() {
           </div>
 
           <button
-            title="Guarded AI Assistant"
-            className="rounded p-2 text-purple-400 hover:bg-purple-950/40 hover:text-purple-300 transition"
+            title="Guarded Socratic Mentor (Gemini 2.5 Flash)"
+            onClick={toggleAIOpen}
+            className={`rounded p-2 transition ${
+              isAIOpen
+                ? 'bg-purple-900/60 text-purple-200 ring-1 ring-purple-500/60 shadow-inner'
+                : 'text-purple-400 hover:bg-purple-950/40 hover:text-purple-300'
+            }`}
           >
             <Sparkles className="h-5 w-5" />
           </button>
@@ -222,6 +231,13 @@ export function WorkspaceLayout() {
             )}
           </div>
         </main>
+
+        {/* Guarded AI Mentor Drawer / Side Panel */}
+        {isAIOpen && (
+          <aside className="w-80 shrink-0 h-full overflow-hidden shadow-2xl">
+            <AIAssistantPanel onClose={toggleAIOpen} />
+          </aside>
+        )}
       </div>
     </div>
   );

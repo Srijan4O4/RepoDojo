@@ -1,34 +1,48 @@
 """
 RepoDojo AI Service
 FastAPI application for AI orchestration, Graphify context retrieval, and guarded Gemini assistance.
-Master Architecture: ADR-001-all-domains-master.md
+Master Architecture: ADR-001 Domain 8 & Domain 9
 """
 
+import json
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+from gemini_client import gemini_client
+from graphify_engine import graphify_engine
+from guardrails import GuardrailValidator
+from prompts import build_system_instruction
 
 
 class ChatRequest(BaseModel):
     session_id: str
     assessment_id: str
     candidate_id: str
+    challenge_id: str = "node-ecommerce-01"
     prompt: str = Field(..., max_length=2000)
     active_file: str | None = None
     selected_code: str | None = None
     terminal_error: str | None = None
+    assistance_level: int = Field(default=1, ge=1, le=3)
+
+
+class GraphifyLoadRequest(BaseModel):
+    challenge_id: str
+    graph_data: dict[str, Any]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize Graphify cache & prewarm models
+    # Startup: Initialize default AST graph for node-ecommerce-01
     print("[AI-Service] Initializing RepoDojo AI Service (Python 3.12+)...")
+    graphify_engine.get_or_create_default_graph("node-ecommerce-01")
     yield
-    # Shutdown: Clean up caches
     print("[AI-Service] Shutting down AI Service...")
 
 
@@ -72,6 +86,33 @@ async def readiness_check():
 
 
 # =============================================================================
+# Domain 9: Graphify Precomputation & Management
+# =============================================================================
+
+
+@app.post("/internal/graphify/load")
+async def load_graphify_artifact(req: GraphifyLoadRequest):
+    """Loads precomputed Graphify AST into memory (Decision 9.1)."""
+    node_count = graphify_engine.load_challenge_graph(req.challenge_id, req.graph_data)
+    return {
+        "status": "success",
+        "challenge_id": req.challenge_id,
+        "nodesLoaded": node_count,
+    }
+
+
+@app.get("/internal/graphify/context")
+async def get_graphify_context(challenge_id: str, query: str, active_file: str | None = None):
+    """Retrieves 1-2 degree AST graph context for a query."""
+    nodes = graphify_engine.query_relevant_nodes(challenge_id, query, active_file)
+    context_md = graphify_engine.format_graph_context_for_prompt(challenge_id, query, active_file)
+    return {
+        "nodes": nodes,
+        "contextMarkdown": context_md,
+    }
+
+
+# =============================================================================
 # Domain 8: Guarded AI Assistant SSE Endpoint
 # =============================================================================
 
@@ -82,15 +123,68 @@ async def stream_ai_chat(request: ChatRequest):
     Guarded AI stream endpoint invoked by the Express Gateway.
     Adheres to Decision 8.1 (Ask Mode only, 7-LOC snippet limit) and Decision 8.2 (Dual-layer).
     """
+    # 1. Inspect prompt for adversarial injection
+    is_adversarial, reason = GuardrailValidator.inspect_prompt(request.prompt)
+    if is_adversarial:
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        # Placeholder for streaming tokens
-        msg = "[RepoDojo Guarded AI] Understanding your repository query...\n"
-        yield f'data: {{"type": "message", "content": "{msg}"}}\n\n'
-        yield 'data: {"type": "usage", "inputTokens": 120, "outputTokens": 45}\n\n'
+        async def rejection_generator() -> AsyncGenerator[str, None]:
+            rejection_msg = (
+                "I cannot fulfill this request. To preserve assessment integrity, "
+                "I operate strictly as a Socratic engineering mentor. "
+                "Please ask a conceptual question or ask for help understanding a specific function or error."
+            )
+            yield f"data: {json.dumps({'type': 'token', 'text': rejection_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'guardrail', 'triggered': True, 'reason': reason})}\n\n"
+            yield f"data: {json.dumps({'type': 'usage', 'inputTokens': 20, 'outputTokens': 30})}\n\n"
+            yield 'data: {"type": "done"}\n\n'
+
+        return StreamingResponse(rejection_generator(), media_type="text/event-stream")
+
+    # 2. Retrieve Graphify AST Context (Decision 9.2)
+    graph_context = graphify_engine.format_graph_context_for_prompt(
+        challenge_id=request.challenge_id,
+        query_text=request.prompt,
+        active_file=request.active_file,
+    )
+
+    # 3. Build Socratic System Prompt (Decision 8.1 & 8.3)
+    system_instruction = build_system_instruction(request.assistance_level)
+
+    # 4. Stream Socratic response through Guardrail validator
+    async def socratic_stream() -> AsyncGenerator[str, None]:
+        full_text_accumulator: list[str] = []
+        token_usage = {"inputTokens": 0, "outputTokens": 0}
+
+        async for chunk in gemini_client.stream_socratic_response(
+            system_instruction=system_instruction,
+            user_prompt=request.prompt,
+            graph_context=graph_context,
+            active_file=request.active_file,
+            selected_code=request.selected_code,
+            terminal_error=request.terminal_error,
+        ):
+            if chunk["type"] == "token":
+                text = chunk["text"]
+                full_text_accumulator.append(text)
+                yield f"data: {json.dumps({'type': 'token', 'text': text})}\n\n"
+            elif chunk["type"] == "usage":
+                token_usage = chunk
+
+        # 5. Deterministic Guardrail Check on complete response (7-Line Cap - Decision 8.3)
+        complete_text = "".join(full_text_accumulator)
+        _, guardrail_triggered, guardrail_reason = (
+            GuardrailValidator.validate_and_sanitize_response(complete_text)
+        )
+
+        if guardrail_triggered:
+            yield (
+                f"data: {json.dumps({'type': 'guardrail', 'triggered': True, 'reason': guardrail_reason})}\n\n"
+            )
+
+        yield f"data: {json.dumps(token_usage)}\n\n"
         yield 'data: {"type": "done"}\n\n'
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(socratic_stream(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

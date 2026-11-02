@@ -1,0 +1,137 @@
+"""
+RepoDojo Gemini 3.8 Flash Client
+Interfaces with Google Gen AI SDK for guarded streaming assistance (Decision 8.1 & 8.2).
+Includes Socratic fallback engine for local testing and CI verification.
+"""
+
+import asyncio
+import os
+from collections.abc import AsyncGenerator
+from typing import Any
+
+
+class GeminiClient:
+    """Manages Gemini 3.8 Flash model invocation and token stream parsing."""
+
+    def __init__(self):
+        self.api_key = os.environ.get("GEMINI_API_KEY", "")
+        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        self._client = None
+
+        if self.api_key and not self.api_key.startswith("test-"):
+            try:
+                from google import genai
+
+                self._client = genai.Client(api_key=self.api_key)
+            except Exception as e:
+                print(f"[GeminiClient] Failed to initialize Google GenAI SDK: {e}")
+
+    async def stream_socratic_response(
+        self,
+        system_instruction: str,
+        user_prompt: str,
+        graph_context: str,
+        active_file: str | None = None,
+        selected_code: str | None = None,
+        terminal_error: str | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        Streams Socratic assistance tokens with usage metrics.
+        """
+        # If real Gemini client is initialized, invoke official GenAI SDK
+        if self._client:
+            try:
+                full_prompt = (
+                    f"{graph_context}\n\n"
+                    f"Candidate Question: {user_prompt}\n"
+                    f"Active File: {active_file or 'None'}\n"
+                    f"Selected Code:\n{selected_code or 'None'}\n"
+                    f"Terminal Output:\n{terminal_error or 'None'}"
+                )
+
+                response = self._client.models.generate_content_stream(
+                    model=self.model_name,
+                    contents=full_prompt,
+                    config={"system_instruction": system_instruction},
+                )
+
+                input_tokens = len(full_prompt.split()) * 2
+                output_tokens = 0
+
+                for chunk in response:
+                    if chunk.text:
+                        output_tokens += len(chunk.text.split()) * 2
+                        yield {"type": "token", "text": chunk.text}
+
+                yield {
+                    "type": "usage",
+                    "inputTokens": input_tokens,
+                    "outputTokens": output_tokens,
+                }
+                return
+            except Exception as e:
+                print(f"[GeminiClient] Fallback to local Socratic engine due to error: {e}")
+
+        # Deterministic High-Fidelity Socratic Mock Engine (for testing & offline dev)
+        simulated_response = self._generate_socratic_mock_text(
+            user_prompt, active_file, selected_code, terminal_error
+        )
+
+        tokens = simulated_response.split(" ")
+        for i, word in enumerate(tokens):
+            yield {"type": "token", "text": word + (" " if i < len(tokens) - 1 else "")}
+            await asyncio.sleep(0.01)
+
+        input_token_est = (len(user_prompt) + len(graph_context)) // 4 + 40
+        output_token_est = len(simulated_response) // 4 + 10
+
+        yield {
+            "type": "usage",
+            "inputTokens": input_token_est,
+            "outputTokens": output_token_est,
+        }
+
+    def _generate_socratic_mock_text(
+        self,
+        prompt: str,
+        active_file: str | None,
+        selected_code: str | None,
+        terminal_error: str | None,
+    ) -> str:
+        prompt_lower = prompt.lower()
+
+        if "discount" in prompt_lower or "total" in prompt_lower or "save20" in prompt_lower:
+            return (
+                "Let's trace the discount calculation logic.\n\n"
+                "When a candidate applies the `'SAVE20'` promo code, what is the expected relationship "
+                "between the original subtotal and the discounted total? If a customer receives 20% off, "
+                "they should pay 80% of the original cost (`subtotal * 0.8`).\n\n"
+                "Take a close look at the arithmetic operator in `src/services/payment.service.ts`: "
+                "is it multiplying by 1.2 instead of applying a discount deduction?"
+            )
+
+        if "payment" in prompt_lower or "checkout" in prompt_lower or "promise" in prompt_lower:
+            return (
+                "Notice how the checkout endpoint calls the payment processing service.\n\n"
+                "In `src/controllers/order.controller.ts`, `processPayment(total)` returns a `Promise`. "
+                "What happens in JavaScript if an asynchronous function returning a Promise is called without "
+                "`await` before sending the HTTP JSON response?\n\n"
+                "The response is sent immediately with an unresolved Promise object rather than the resolved transaction data."
+            )
+
+        if "cors" in prompt_lower or "header" in prompt_lower or "origin" in prompt_lower:
+            return (
+                "Cross-Origin Resource Sharing (CORS) requires specific HTTP headers on incoming cross-origin requests.\n\n"
+                "In Express, check whether `cors()` middleware is mounted before your route definitions in `src/index.ts`. "
+                "Without the appropriate Access-Control-Allow-Origin headers, client browsers will block the response."
+            )
+
+        return (
+            f"Based on the repository architecture in `{active_file or 'your workspace'}`:\n\n"
+            "Consider the flow of data: what input does this component receive, and what invariant does it assume? "
+            "Inspect the error log to see which assertion or runtime condition failed, and check whether the return type "
+            "matches the contract required by caller functions."
+        )
+
+
+gemini_client = GeminiClient()
