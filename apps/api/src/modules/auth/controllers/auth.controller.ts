@@ -41,7 +41,8 @@ export class AuthController {
     }
 
     try {
-      const { newAccessToken, newRefreshToken } = await TokenService.rotateRefreshToken(rawRefreshToken);
+      const { newAccessToken, newRefreshToken } =
+        await TokenService.rotateRefreshToken(rawRefreshToken);
       TokenService.setAuthCookies(res, newAccessToken, newRefreshToken);
 
       res.status(200).json({
@@ -50,6 +51,14 @@ export class AuthController {
       });
     } catch (err: any) {
       TokenService.clearAuthCookies(res);
+
+      if (err.message === 'TOKEN_REUSE_DETECTED') {
+        res.status(401).json({
+          error: 'TOKEN_REUSE_DETECTED',
+          message: 'Refresh token reuse detected. All active sessions have been terminated.',
+        });
+        return;
+      }
 
       if (err.message === 'REFRESH_TOKEN_EXPIRED') {
         res.status(401).json({

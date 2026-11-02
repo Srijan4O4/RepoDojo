@@ -1,6 +1,6 @@
 """
 RepoDojo Guardrail Validator
-Enforces the 7-line code cap and prompt injection defenses (Decision 8.3).
+Enforces the 7-line code cap, secret scrubbing, and prompt injection defenses (Decision 8.3 & SEC-05).
 """
 
 import re
@@ -87,45 +87,70 @@ class GuardrailValidator:
     ) -> tuple[str, bool, str | None]:
         """
         Parses all fenced code blocks (```...```) in the LLM response.
-        Enforces a hard limit of at most 7 lines of code total (Decision 8.3).
+        Enforces a hard limit of at most 7 lines of code total across ALL code blocks (Decision 8.3 & SEC-05).
         Truncates excessive code and appends a Socratic conceptual explanation.
+        Handles unclosed fences and multi-block responses.
         """
+        if not response_text:
+            return response_text, False, None
+
+        # Automatically normalize unclosed code fences
+        normalized_text = response_text
+        if normalized_text.count("```") % 2 != 0:
+            normalized_text = normalized_text + "\n```"
+
         code_block_pattern = re.compile(r"```([a-zA-Z0-9_\-\+]*)\n([\s\S]*?)```")
+        matches = list(code_block_pattern.finditer(normalized_text))
+
+        if not matches:
+            return normalized_text, False, None
 
         total_code_lines = 0
-        matches = list(code_block_pattern.finditer(response_text))
-
         for match in matches:
             code_content = match.group(2).strip()
             lines = [line for line in code_content.split("\n") if line.strip()]
             total_code_lines += len(lines)
 
         if total_code_lines <= 7:
-            return response_text, False, None
+            return normalized_text, False, None
 
-        # Guardrail triggered: truncate code blocks exceeding 7 lines
+        # Guardrail triggered: truncate code blocks so aggregate lines <= 7
         guardrail_triggered = True
         reason = "EXCEEDED_7_LINE_LIMIT"
+        budget = 7
 
         def replace_block(match: re.Match) -> str:
+            nonlocal budget
             lang = match.group(1) or ""
             code_content = match.group(2).strip()
-            lines = code_content.split("\n")
+            lines = [line for line in code_content.split("\n") if line.strip()]
+            comment_prefix = "//" if lang in ["ts", "js", "cpp", "java", "go", "c", "rust"] else "#"
 
-            if len(lines) > 5:
-                truncated_code = "\n".join(lines[:5])
-                comment_prefix = (
-                    "//" if lang in ["ts", "js", "cpp", "java", "go", "c", "rust"] else "#"
-                )
+            if budget <= 0:
+                # No budget remaining: truncate entire block
                 return (
                     f"```{lang}\n"
-                    f"{truncated_code}\n"
                     f"{comment_prefix} [Truncated by RepoDojo Guardrail: Maximum 7-line code limit]\n"
                     f"```\n\n"
                     f"*Note: Full implementation details have been truncated to maintain assessment integrity. "
                     f"Consider how the remaining lines should handle edge cases or error states.*"
                 )
-            return match.group(0)
 
-        sanitized_text = code_block_pattern.sub(replace_block, response_text)
+            if len(lines) <= budget:
+                budget -= len(lines)
+                return match.group(0)
+
+            # Block exceeds remaining budget: truncate to remaining budget
+            truncated_code = "\n".join(lines[:budget])
+            budget = 0
+            return (
+                f"```{lang}\n"
+                f"{truncated_code}\n"
+                f"{comment_prefix} [Truncated by RepoDojo Guardrail: Maximum 7-line code limit]\n"
+                f"```\n\n"
+                f"*Note: Full implementation details have been truncated to maintain assessment integrity. "
+                f"Consider how the remaining lines should handle edge cases or error states.*"
+            )
+
+        sanitized_text = code_block_pattern.sub(replace_block, normalized_text)
         return sanitized_text, guardrail_triggered, reason

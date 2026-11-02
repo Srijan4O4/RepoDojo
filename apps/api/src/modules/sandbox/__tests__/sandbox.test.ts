@@ -10,6 +10,7 @@ import { AssessmentModel } from '../../assessment/models/assessment.model.js';
 import { SandboxService } from '../services/sandbox.service.js';
 import { TerminalGatewayService } from '../services/terminal-gateway.service.js';
 import { PreviewProxyService } from '../services/preview-proxy.service.js';
+import { computeLineDiff } from '../controllers/workspace-file.controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -282,6 +283,150 @@ describe('Domain 6: Sandbox and Execution Infrastructure', () => {
       expect(config.backendTarget).toBe('http://172.28.1.10:5000');
       expect(config.caddySnippet).toContain('reverse_proxy http://172.28.1.10:5173');
       expect(config.caddySnippet).toContain('reverse_proxy http://172.28.1.10:5000');
+    });
+  });
+  describe('SEC-02: Cross-Candidate Sandbox Authorization & Lifecycle Immutability', () => {
+    let candidateA: any;
+    let candidateB: any;
+    let adminUser: any;
+    let tokenA: string;
+    let tokenB: string;
+    let adminToken: string;
+    let sessionB: any;
+
+    beforeEach(async () => {
+      candidateA = await UserModel.create({
+        email: 'candA@repodojo.com',
+        name: 'Candidate A',
+        role: 'candidate',
+      });
+      tokenA = TokenService.generateAccessToken(candidateA);
+
+      candidateB = await UserModel.create({
+        email: 'candB@repodojo.com',
+        name: 'Candidate B',
+        role: 'candidate',
+      });
+      tokenB = TokenService.generateAccessToken(candidateB);
+
+      adminUser = await UserModel.create({
+        email: 'admin@repodojo.com',
+        name: 'Admin User',
+        role: 'admin',
+      });
+      adminToken = TokenService.generateAccessToken(adminUser);
+
+      sessionB = await AssessmentModel.create({
+        candidateId: candidateB._id,
+        challengeId: 'node-ecommerce-01',
+        status: 'READY',
+        durationMinutes: 60,
+      });
+
+      await SandboxService.provisionSandbox({
+        sessionId: sessionB._id.toString(),
+        candidateId: candidateB._id.toString(),
+        challengeId: 'node-ecommerce-01',
+        starterFiles: {
+          'src/index.ts': 'console.log("starter");\n\nreturn;\n',
+        },
+      });
+    });
+
+    it('should reject candidate A attempting to provision candidate B session with 403', async () => {
+      const res = await request(app)
+        .post(`/api/sandboxes/${sessionB._id}/provision`)
+        .set('Cookie', [`access_token=${tokenA}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('should reject candidate A attempting to read candidate B sandbox status with 403', async () => {
+      const res = await request(app)
+        .get(`/api/sandboxes/${sessionB._id}/status`)
+        .set('Cookie', [`access_token=${tokenA}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('should reject candidate A attempting to read candidate B workspace tree with 403', async () => {
+      const res = await request(app)
+        .get(`/api/workspace/${sessionB._id}/tree`)
+        .set('Cookie', [`access_token=${tokenA}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('should reject candidate A attempting to read candidate B file with 403', async () => {
+      const res = await request(app)
+        .get(`/api/workspace/${sessionB._id}/file?path=src/index.ts`)
+        .set('Cookie', [`access_token=${tokenA}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('should reject candidate A attempting to edit candidate B file with 403', async () => {
+      const res = await request(app)
+        .put(`/api/workspace/${sessionB._id}/file`)
+        .set('Cookie', [`access_token=${tokenA}`])
+        .send({ path: 'src/index.ts', content: 'hacked' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('should reject candidate A attempting to replay candidate B terminal with 403', async () => {
+      const res = await request(app)
+        .get(`/api/sandboxes/${sessionB._id}/terminal/replay`)
+        .set('Cookie', [`access_token=${tokenA}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('should reject candidate A attempting to terminate candidate B sandbox with 403', async () => {
+      const res = await request(app)
+        .post(`/api/sandboxes/${sessionB._id}/terminate`)
+        .set('Cookie', [`access_token=${tokenA}`]);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('should allow admin to access candidate B session with 200', async () => {
+      const res = await request(app)
+        .get(`/api/workspace/${sessionB._id}/tree`)
+        .set('Cookie', [`access_token=${adminToken}`]);
+
+      expect(res.status).toBe(200);
+      expect(res.body.files).toBeDefined();
+    });
+
+    it('should reject file mutations with 409 when session is COMPLETED (lifecycle immutability)', async () => {
+      sessionB.status = 'COMPLETED';
+      await sessionB.save();
+
+      const res = await request(app)
+        .put(`/api/workspace/${sessionB._id}/file`)
+        .set('Cookie', [`access_token=${tokenB}`])
+        .send({ path: 'src/index.ts', content: 'late modification' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('SESSION_IMMUTABLE');
+    });
+
+    it('should accurately compute LCS diff additions and deletions without collapsing duplicate lines', () => {
+      // Add 3 new empty lines to the file
+      const original = 'line1\n\nline2\n';
+      const modified = 'line1\n\n\n\n\nline2\n'; // 3 more empty lines added
+
+      const diff = computeLineDiff(original, modified);
+      expect(diff.additions).toBe(3);
+      expect(diff.deletions).toBe(0);
     });
   });
 });

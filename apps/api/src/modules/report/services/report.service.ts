@@ -127,7 +127,7 @@ export class ReportService {
     try {
       const res = await fetch(`${AI_SERVICE_URL}/internal/ai/report/synthesize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Internal-Service-Key': process.env.INTERNAL_SERVICE_KEY || 'dev-internal-service-key-repodojo' },
         body: JSON.stringify({
           session_id: params.sessionId,
           challenge_id: params.challengeId,

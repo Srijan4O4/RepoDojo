@@ -5,12 +5,13 @@ Master Architecture: ADR-001 Domain 8 & Domain 9
 """
 
 import json
+import os
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -77,6 +78,23 @@ START_TIME = time.time()
 
 
 # =============================================================================
+# Service-to-Service Authentication Dependency (SEC-03)
+# =============================================================================
+
+
+async def verify_service_auth(
+    x_internal_service_key: str | None = Header(None, alias="X-Internal-Service-Key"),
+):
+    expected_key = os.environ.get("INTERNAL_SERVICE_KEY", "dev-internal-service-key-repodojo")
+    if not x_internal_service_key or x_internal_service_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Missing or invalid X-Internal-Service-Key.",
+        )
+    return x_internal_service_key
+
+
+# =============================================================================
 # Domain 13: 3-Stage Health Probes
 # =============================================================================
 
@@ -93,24 +111,27 @@ async def liveness_check():
 
 @app.get("/readyz")
 async def readiness_check():
+    gemini_ready = gemini_client.is_configured()
+    is_prod = os.environ.get("NODE_ENV") == "production" or os.environ.get("ENV") == "production"
+    is_ready = gemini_ready or not is_prod
     return {
-        "status": "healthy",
+        "status": "healthy" if is_ready else "degraded",
         "service": "repodojo-ai-service",
         "version": "0.4.0",
         "uptime_seconds": int(time.time() - START_TIME),
         "dependencies": {
-            "gemini_api": {"status": "configured"},
+            "gemini_api": {"status": "configured" if gemini_ready else "unconfigured"},
             "graphify_cache": {"status": "ready"},
         },
     }
 
 
 # =============================================================================
-# Domain 9: Graphify Precomputation & Management
+# Domain 9: Graphify Precomputation & Management (Authenticated)
 # =============================================================================
 
 
-@app.post("/internal/graphify/load")
+@app.post("/internal/graphify/load", dependencies=[Depends(verify_service_auth)])
 async def load_graphify_artifact(req: GraphifyLoadRequest):
     """Loads precomputed Graphify AST into memory (Decision 9.1)."""
     node_count = graphify_engine.load_challenge_graph(req.challenge_id, req.graph_data)
@@ -121,7 +142,7 @@ async def load_graphify_artifact(req: GraphifyLoadRequest):
     }
 
 
-@app.get("/internal/graphify/context")
+@app.get("/internal/graphify/context", dependencies=[Depends(verify_service_auth)])
 async def get_graphify_context(challenge_id: str, query: str, active_file: str | None = None):
     """Retrieves 1-2 degree AST graph context for a query."""
     nodes = graphify_engine.query_relevant_nodes(challenge_id, query, active_file)
@@ -133,15 +154,18 @@ async def get_graphify_context(challenge_id: str, query: str, active_file: str |
 
 
 # =============================================================================
-# Domain 8: Guarded AI Assistant SSE Endpoint
+# Domain 8: Guarded AI Assistant SSE Endpoint (Authenticated & Stream-Sanitized)
 # =============================================================================
 
 
-@app.post("/internal/ai/chat/stream")
+@app.post(
+    "/internal/ai/chat/stream",
+    dependencies=[Depends(verify_service_auth)],
+)
 async def stream_ai_chat(request: ChatRequest):
     """
-    Guarded AI stream endpoint invoked by the Express Gateway.
-    Adheres to Decision 8.1 (Ask Mode only, 7-LOC snippet limit) and Decision 8.2 (Dual-layer).
+    Guarded AI stream endpoint invoked by Express Gateway.
+    Enforces real-time 7-LOC streaming cap (SEC-05) and Socratic guardrails (Decision 8.1 & 8.3).
     """
     # 1. Inspect prompt for adversarial injection
     is_adversarial, reason = GuardrailValidator.inspect_prompt(request.prompt)
@@ -180,13 +204,17 @@ async def stream_ai_chat(request: ChatRequest):
         active_file=request.active_file,
     )
 
-    # 3. Build Socratic System Prompt (Decision 8.1 & 8.3)
+    # 4. Build Socratic System Prompt (Decision 8.1 & 8.3)
     system_instruction = build_system_instruction(request.assistance_level)
 
-    # 4. Stream Socratic response through Guardrail validator
+    # 5. Stream Socratic response with real-time 7-line code guardrail enforcement
     async def socratic_stream() -> AsyncGenerator[str, None]:
-        full_text_accumulator: list[str] = []
         token_usage = {"inputTokens": 0, "outputTokens": 0}
+        in_code_block = False
+        code_lines_emitted = 0
+        guardrail_triggered = False
+        suppressing_code = False
+        line_buffer = ""
 
         async for chunk in gemini_client.stream_socratic_response(
             system_instruction=system_instruction,
@@ -198,20 +226,56 @@ async def stream_ai_chat(request: ChatRequest):
         ):
             if chunk["type"] == "token":
                 text = chunk["text"]
-                full_text_accumulator.append(text)
-                yield f"data: {json.dumps({'type': 'token', 'text': text})}\n\n"
+                for char in text:
+                    line_buffer += char
+                    if char == "\n":
+                        # Process completed line
+                        stripped = line_buffer.strip()
+                        if stripped.startswith("```"):
+                            if not in_code_block:
+                                in_code_block = True
+                                suppressing_code = False
+                                yield f"data: {json.dumps({'type': 'token', 'text': line_buffer})}\n\n"
+                            else:
+                                in_code_block = False
+                                if not suppressing_code:
+                                    yield f"data: {json.dumps({'type': 'token', 'text': line_buffer})}\n\n"
+                        elif in_code_block:
+                            if stripped:
+                                if code_lines_emitted < 7:
+                                    code_lines_emitted += 1
+                                    yield f"data: {json.dumps({'type': 'token', 'text': line_buffer})}\n\n"
+                                else:
+                                    if not suppressing_code:
+                                        suppressing_code = True
+                                        guardrail_triggered = True
+                                        truncation_msg = (
+                                            "\n// [Truncated by RepoDojo Guardrail: Maximum 7-line code limit]\n```\n\n"
+                                            "*Note: Full implementation details have been truncated to maintain assessment integrity. "
+                                            "Consider how the remaining lines should handle edge cases or error states.*\n"
+                                        )
+                                        yield f"data: {json.dumps({'type': 'token', 'text': truncation_msg})}\n\n"
+                                        yield f"data: {json.dumps({'type': 'guardrail', 'triggered': True, 'reason': 'EXCEEDED_7_LINE_LIMIT'})}\n\n"
+                            else:
+                                if not suppressing_code:
+                                    yield f"data: {json.dumps({'type': 'token', 'text': line_buffer})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type': 'token', 'text': line_buffer})}\n\n"
+                        line_buffer = ""
+
             elif chunk["type"] == "usage":
                 token_usage = chunk
 
-        # 5. Deterministic Guardrail Check on complete response (7-Line Cap - Decision 8.3)
-        complete_text = "".join(full_text_accumulator)
-        _, guardrail_triggered, guardrail_reason = (
-            GuardrailValidator.validate_and_sanitize_response(complete_text)
-        )
+        # Flush any remaining buffer text
+        if line_buffer:
+            if not suppressing_code:
+                yield f"data: {json.dumps({'type': 'token', 'text': line_buffer})}\n\n"
+            if in_code_block and not suppressing_code:
+                yield f"data: {json.dumps({'type': 'token', 'text': '\\n```\\n'})}\n\n"
 
         if guardrail_triggered:
             yield (
-                f"data: {json.dumps({'type': 'guardrail', 'triggered': True, 'reason': guardrail_reason})}\n\n"
+                f"data: {json.dumps({'type': 'guardrail', 'triggered': True, 'reason': 'EXCEEDED_7_LINE_LIMIT'})}\n\n"
             )
 
         yield f"data: {json.dumps(token_usage)}\n\n"
@@ -221,11 +285,15 @@ async def stream_ai_chat(request: ChatRequest):
 
 
 # =============================================================================
-# Domain 11: Candidate Feedback Report Synthesis Endpoint (Decision 11.1)
+# Domain 11: Candidate Feedback Report Synthesis Endpoint (Authenticated)
 # =============================================================================
 
 
-@app.post("/internal/ai/report/synthesize", response_model=ReportSynthesisResponse)
+@app.post(
+    "/internal/ai/report/synthesize",
+    response_model=ReportSynthesisResponse,
+    dependencies=[Depends(verify_service_auth)],
+)
 async def synthesize_candidate_report(req: ReportSynthesisRequest):
     """
     Synthesizes actionable, evidence-based candidate performance report narrative.

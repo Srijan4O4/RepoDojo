@@ -9,6 +9,7 @@ export interface IAssessment extends Document {
   startedAt?: Date;
   expiresAt?: Date;
   submittedAt?: Date;
+  submissionHash?: string;
   durationMinutes: number;
   workspaceRevision: number;
   idempotencyKey?: string;
@@ -66,6 +67,9 @@ const assessmentSchema = new Schema<IAssessment>(
     },
     submittedAt: {
       type: Date,
+    },
+    submissionHash: {
+      type: String,
     },
     durationMinutes: {
       type: Number,

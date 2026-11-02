@@ -95,10 +95,31 @@ describe('Domain 3: Authentication & User Management', () => {
       expect(newTokenExists).toBe(true);
     });
 
-    it('should reject rotation attempt when using an invalid or already rotated token', async () => {
+    it('should reject rotation attempt when using an invalid or non-existent token', async () => {
       await expect(TokenService.rotateRefreshToken('non-existent-token-hex')).rejects.toThrow(
         'INVALID_REFRESH_TOKEN',
       );
+    });
+
+    it('should detect refresh token replay/reuse, revoke all sessions, and throw TOKEN_REUSE_DETECTED (SEC-07)', async () => {
+      const user = await UserModel.create({
+        email: 'victim@test.com',
+        name: 'Victim User',
+        role: 'candidate',
+      });
+
+      const initialToken = await TokenService.createRefreshToken(user);
+
+      // Legitimate user rotates token
+      const rotation1 = await TokenService.rotateRefreshToken(initialToken);
+      expect(rotation1.newRefreshToken).toBeDefined();
+
+      // Attacker replays initialToken (which is now in revokedTokenHashes)
+      await expect(TokenService.rotateRefreshToken(initialToken)).rejects.toThrow('TOKEN_REUSE_DETECTED');
+
+      // Verify that all active tokens for this user were revoked as a breach containment measure
+      const compromisedUser = await UserModel.findById(user._id);
+      expect(compromisedUser?.refreshTokens.length).toBe(0);
     });
   });
 
@@ -183,6 +204,29 @@ describe('Domain 3: Authentication & User Management', () => {
       const hasRefreshToken = cookies.some((c: string) => c.includes('refresh_token='));
       expect(hasAccessToken).toBe(true);
       expect(hasRefreshToken).toBe(true);
+    });
+
+    it('POST /api/auth/refresh should return 401 TOKEN_REUSE_DETECTED when replaying a revoked token', async () => {
+      const user = await UserModel.create({
+        email: 'replay.endpoint@repodojo.com',
+        name: 'Replay Tester',
+        role: 'candidate',
+      });
+
+      const initialToken = await TokenService.createRefreshToken(user);
+
+      // First rotation succeeds
+      const res1 = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', [`refresh_token=${initialToken}`]);
+      expect(res1.status).toBe(200);
+
+      // Replay of first token fails with TOKEN_REUSE_DETECTED
+      const res2 = await request(app)
+        .post('/api/auth/refresh')
+        .set('Cookie', [`refresh_token=${initialToken}`]);
+      expect(res2.status).toBe(401);
+      expect(res2.body.error).toBe('TOKEN_REUSE_DETECTED');
     });
 
     it('POST /api/auth/logout should revoke token and clear cookies', async () => {

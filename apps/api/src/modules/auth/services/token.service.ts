@@ -12,7 +12,17 @@ export interface TokenPayload {
   exp?: number;
 }
 
-const ACCESS_TOKEN_SECRET = process.env.JWT_ACCESS_SECRET || 'dev-insecure-access-secret-repodojo-12345';
+function getAccessTokenSecret(): string {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('CRITICAL CONFIGURATION ERROR: JWT_ACCESS_SECRET must be set in production mode.');
+    }
+    return 'dev-insecure-access-secret-repodojo-12345';
+  }
+  return secret;
+}
+
 const ACCESS_TOKEN_EXPIRY = '15m';
 const REFRESH_TOKEN_DAYS = 7;
 
@@ -33,14 +43,14 @@ export class TokenService {
       email: user.email,
       role: user.role,
     };
-    return jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
+    return jwt.sign(payload, getAccessTokenSecret(), { expiresIn: ACCESS_TOKEN_EXPIRY });
   }
 
   /**
    * Verifies an Access Token JWT.
    */
   public static verifyAccessToken(token: string): TokenPayload {
-    return jwt.verify(token, ACCESS_TOKEN_SECRET) as TokenPayload;
+    return jwt.verify(token, getAccessTokenSecret()) as TokenPayload;
   }
 
   /**
@@ -66,25 +76,31 @@ export class TokenService {
   }
 
   /**
-   * Rotates a Refresh Token with automatic token reuse (theft) detection.
+   * Rotates a Refresh Token with automatic token reuse (theft) detection (SEC-07 & RFC 6749).
    */
   public static async rotateRefreshToken(
     rawToken: string,
   ): Promise<{ user: IUser; newAccessToken: string; newRefreshToken: string }> {
     const tokenHash = this.hashToken(rawToken);
 
-    // Find user who owns this token hash
-    const user = await UserModel.findOne({ 'refreshTokens.tokenHash': tokenHash });
+    // 1. Token Reuse / Theft Detection:
+    // If the presented token was previously rotated and placed in revokedTokenHashes,
+    // this indicates an adversary has replayed a captured refresh token.
+    const compromisedUser = await UserModel.findOne({ revokedTokenHashes: tokenHash });
+    if (compromisedUser) {
+      // Invalidate all active tokens for this compromised account immediately
+      compromisedUser.refreshTokens = [];
+      await compromisedUser.save();
+      throw new Error('TOKEN_REUSE_DETECTED');
+    }
 
+    // 2. Find user who owns this active token hash
+    const user = await UserModel.findOne({ 'refreshTokens.tokenHash': tokenHash });
     if (!user) {
-      // Possible Token Reuse / Theft attempt:
-      // The token might have already been rotated. We cannot identify user without token family or ID,
-      // so we reject the rotation attempt.
       throw new Error('INVALID_REFRESH_TOKEN');
     }
 
     const tokenRecord = user.refreshTokens.find((t) => t.tokenHash === tokenHash);
-
     if (!tokenRecord) {
       throw new Error('INVALID_REFRESH_TOKEN');
     }
@@ -98,10 +114,19 @@ export class TokenService {
 
     const family = tokenRecord.family;
 
-    // Invalidate the old token
+    // 3. Mark old token as revoked for replay detection
     user.refreshTokens = user.refreshTokens.filter((t) => t.tokenHash !== tokenHash);
+    if (!user.revokedTokenHashes) {
+      user.revokedTokenHashes = [];
+    }
+    user.revokedTokenHashes.push(tokenHash);
 
-    // Issue newly rotated token in the same family
+    // Cap history to prevent unbounded growth
+    if (user.revokedTokenHashes.length > 20) {
+      user.revokedTokenHashes = user.revokedTokenHashes.slice(-20);
+    }
+
+    // 4. Issue newly rotated token in the same family
     const newRawRefreshToken = crypto.randomBytes(32).toString('hex');
     const newTokenHash = this.hashToken(newRawRefreshToken);
     const newExpiresAt = new Date(Date.now() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000);

@@ -8,6 +8,9 @@ export interface EvaluationDocument
   assessmentId: mongoose.Types.ObjectId;
   candidateId: mongoose.Types.ObjectId;
   challengeId: string;
+  submissionId?: string;
+  snapshotHash?: string;
+  executionEvidence?: Record<string, unknown>;
   executionTimeMs: number;
 }
 
@@ -56,11 +59,14 @@ const TrajectoryPillarSchema = new Schema(
 
 const EvaluationSchema = new Schema<EvaluationDocument>(
   {
-    sessionId: { type: Schema.Types.ObjectId, ref: 'Assessment', required: true, index: true },
+    sessionId: { type: Schema.Types.ObjectId, ref: 'Assessment', required: true, unique: true, index: true },
     assessmentId: { type: Schema.Types.ObjectId, ref: 'Assessment', required: true },
     candidateId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     challengeId: { type: String, required: true },
     challengeVersion: { type: String, required: true, default: '1.0.0' },
+    submissionId: { type: String },
+    snapshotHash: { type: String },
+    executionEvidence: { type: Schema.Types.Mixed },
     submissionHash: { type: String, required: true },
     totalScore: { type: Number, required: true, min: 0, max: 100 },
     pillars: {

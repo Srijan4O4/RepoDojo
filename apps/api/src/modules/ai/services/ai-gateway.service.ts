@@ -107,7 +107,7 @@ export class AIGatewayService {
     try {
       const pyResponse = await fetch(`${AI_SERVICE_URL}/internal/ai/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Internal-Service-Key': process.env.INTERNAL_SERVICE_KEY || 'dev-internal-service-key-repodojo' },
         body: JSON.stringify({
           session_id: sessionId,
           assessment_id: session._id.toString(),

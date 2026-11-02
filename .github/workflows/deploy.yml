@@ -39,11 +39,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute Image Tag
+      - name: Compute Image Tag & Owner
         id: meta
         run: |
           TAG=$(echo "${{ github.sha }}" | cut -c1-7)
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "owner=${OWNER}" >> $GITHUB_OUTPUT
 
       - name: Build & Push Express API Image (linux/arm64)
         uses: docker/build-push-action@v5
@@ -53,8 +55,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/repodojo-api:${{ steps.meta.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/repodojo-api:latest
+            ghcr.io/${{ steps.meta.outputs.owner }}/repodojo-api:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/repodojo-api:latest
 
       - name: Build & Push Python AI Service Image (linux/arm64)
         uses: docker/build-push-action@v5
@@ -64,8 +66,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/repodojo-ai-service:${{ steps.meta.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/repodojo-ai-service:latest
+            ghcr.io/${{ steps.meta.outputs.owner }}/repodojo-ai-service:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/repodojo-ai-service:latest
 
   # ============================================================================
   # 2. Automated Rolling Deployment to OCI Control Plane VM (Decision 14.2)
@@ -109,8 +111,9 @@ jobs:
             done
 
             if [ "${READY}" -ne 1 ]; then
-              echo "[!] CRITICAL: Deployment health verification failed! Rolling back..."
-              docker compose -f infra/docker/compose.prod.yml rollback || docker compose -f infra/docker/compose.prod.yml restart
+              echo "[!] CRITICAL: Deployment health verification failed! Inspecting logs and restarting services..."
+              docker compose -f infra/docker/compose.prod.yml logs --tail=50
+              docker compose -f infra/docker/compose.prod.yml restart
               exit 1
             fi
             echo "[✓] Deployment completed successfully."

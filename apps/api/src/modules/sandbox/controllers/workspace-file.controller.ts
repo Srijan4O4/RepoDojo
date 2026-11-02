@@ -2,11 +2,46 @@ import type { Request, Response } from 'express';
 import { SandboxService } from '../services/sandbox.service.js';
 import { AssessmentModel } from '../../assessment/models/assessment.model.js';
 
+/**
+ * Computes exact line additions and deletions using Longest Common Subsequence (LCS).
+ * Accurately accounts for duplicate lines (e.g. empty lines, brackets) without Set deduplication.
+ */
+export function computeLineDiff(original: string, modified: string): { additions: number; deletions: number } {
+  if (original === modified) {
+    return { additions: 0, deletions: 0 };
+  }
+
+  const origLines = original.split('\n');
+  const modLines = modified.split('\n');
+  const m = origLines.length;
+  const n = modLines.length;
+
+  let prev = new Int32Array(n + 1);
+  let curr = new Int32Array(n + 1);
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (origLines[i - 1] === modLines[j - 1]) {
+        curr[j] = prev[j - 1] + 1;
+      } else {
+        curr[j] = Math.max(prev[j], curr[j - 1]);
+      }
+    }
+    prev.set(curr);
+  }
+
+  const lcsLength = curr[n];
+  return {
+    deletions: m - lcsLength,
+    additions: n - lcsLength,
+  };
+}
+
 export class WorkspaceFileController {
   /**
    * Sanitizes and validates workspace file path against directory traversal attacks.
    */
-  private static sanitizePath(rawPath: string): string | null {
+  public static sanitizePath(rawPath: string): string | null {
     if (!rawPath || typeof rawPath !== 'string') return null;
     const normalized = rawPath.replace(/\\/g, '/').trim();
     if (normalized.includes('..') || normalized.startsWith('/') || normalized.startsWith('./')) {
@@ -16,17 +51,32 @@ export class WorkspaceFileController {
   }
 
   /**
-   * Verifies session authorization.
+   * Verifies session authorization and lifecycle state.
    */
-  private static async verifyAccess(req: Request, sessionId: string) {
-    const candidateId = req.user?.sub;
-    const role = req.user?.role;
+  private static async verifyAccess(req: Request, sessionId: string, requireActive = false) {
+    let session = req.assessmentSession;
+    if (!session) {
+      session = (await AssessmentModel.findById(sessionId)) || undefined;
+    }
 
-    const session = await AssessmentModel.findById(sessionId);
     if (!session) return { error: 'SESSION_NOT_FOUND', status: 404 };
 
-    if (session.candidateId.toString() !== candidateId && role !== 'admin') {
+    const candidateId = req.user?.sub || req.user?.id || req.user?._id;
+    const role = req.user?.role;
+
+    if (session.candidateId.toString() !== candidateId?.toString() && role !== 'admin') {
       return { error: 'FORBIDDEN', status: 403 };
+    }
+
+    if (requireActive) {
+      const activeStates = ['CREATED', 'PROVISIONING', 'READY', 'IN_PROGRESS'];
+      if (!activeStates.includes(session.status)) {
+        return {
+          error: 'SESSION_IMMUTABLE',
+          status: 409,
+          message: `Assessment session is in '${session.status}' state and workspace is frozen.`,
+        };
+      }
     }
 
     return { session };
@@ -103,12 +153,13 @@ export class WorkspaceFileController {
   /**
    * PUT /api/workspace/:sessionId/file
    * Saves updated file content into sandbox disk and increments workspace revision.
+   * Rejects if session is frozen or completed (SEC-02).
    */
   public static async saveFile(req: Request, res: Response): Promise<void> {
     const sessionId = String(req.params.sessionId);
-    const auth = await WorkspaceFileController.verifyAccess(req, sessionId);
+    const auth = await WorkspaceFileController.verifyAccess(req, sessionId, true);
     if (auth.error) {
-      res.status(auth.status).json({ error: auth.error });
+      res.status(auth.status).json({ error: auth.error, message: auth.message });
       return;
     }
 
@@ -150,7 +201,7 @@ export class WorkspaceFileController {
 
   /**
    * GET /api/workspace/:sessionId/diff
-   * Returns server-generated visual Git diff against immutable starter baseline (Decision 6.4).
+   * Returns server-generated visual Git diff against immutable starter baseline using LCS (Decision 6.4).
    */
   public static async getDiff(req: Request, res: Response): Promise<void> {
     const sessionId = String(req.params.sessionId);
@@ -175,19 +226,7 @@ export class WorkspaceFileController {
 
     sandbox.files.forEach((file, path) => {
       if (file.content !== file.originalContent) {
-        const origLines = new Set(file.originalContent.split('\n'));
-        const modLines = new Set(file.content.split('\n'));
-
-        let additions = 0;
-        let deletions = 0;
-
-        file.content.split('\n').forEach((l) => {
-          if (!origLines.has(l)) additions++;
-        });
-        file.originalContent.split('\n').forEach((l) => {
-          if (!modLines.has(l)) deletions++;
-        });
-
+        const { additions, deletions } = computeLineDiff(file.originalContent, file.content);
         diffs.push({
           path,
           status: 'modified',
@@ -203,12 +242,13 @@ export class WorkspaceFileController {
   /**
    * POST /api/workspace/:sessionId/flush
    * Explicitly acknowledges flushing all pending client edits (Decision 6.4).
+   * Rejects if session is frozen or immutable.
    */
   public static async flushWorkspace(req: Request, res: Response): Promise<void> {
     const sessionId = String(req.params.sessionId);
-    const auth = await WorkspaceFileController.verifyAccess(req, sessionId);
+    const auth = await WorkspaceFileController.verifyAccess(req, sessionId, true);
     if (auth.error) {
-      res.status(auth.status).json({ error: auth.error });
+      res.status(auth.status).json({ error: auth.error, message: auth.message });
       return;
     }
 
