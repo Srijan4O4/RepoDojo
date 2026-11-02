@@ -133,7 +133,6 @@ class GeminiClient:
             "matches the contract required by caller functions."
         )
 
-
     async def synthesize_report_narrative(
         self,
         total_score: float,

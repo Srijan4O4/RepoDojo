@@ -20,7 +20,10 @@ SECRET_PATTERNS = [
     (re.compile(r"\bAIza[0-9A-Za-z-_]{30,45}\b"), "[REDACTED_GOOGLE_API_KEY]"),
     (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,255}\b"), "[REDACTED_GITHUB_TOKEN]"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED_AWS_KEY]"),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"), "[REDACTED_JWT]"),
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+        "[REDACTED_JWT]",
+    ),
     (
         re.compile(
             r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
@@ -65,7 +68,6 @@ class GuardrailValidator:
             return ""
         attr_str = f" {attr}" if attr else ""
         return f"<{tag}{attr_str}>\n{content}\n</{tag}>"
-    """Deterministic multi-layer guardrail for candidate prompts and LLM outputs."""
 
     @staticmethod
     def inspect_prompt(prompt: str) -> tuple[bool, str | None]:
