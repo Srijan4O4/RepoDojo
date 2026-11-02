@@ -151,3 +151,23 @@ def test_report_synthesis_endpoint(client):
     assert len(data["areas_for_improvement"]) >= 2
     assert len(data["practice_recommendations"]) >= 2
     assert "82.5" in data["executive_summary"]
+
+
+def test_guardrail_redacts_secrets_pre_inference(client):
+    from guardrails import GuardrailValidator
+
+    fake_key = "".join(["AI", "zaFakeTestKey", "1234567890123456789012345"])
+    fake_token = "".join(["gh", "p_faketesttoken", "123456789012345678901234567890"])
+
+    sensitive_text = (
+        f"const key = '{fake_key}';\n"
+        f"const token = '{fake_token}';\n"
+        "const uri = 'mongodb+srv://admin:pass@cluster.mongodb.net/prod';"
+    )
+
+    scrubbed, count = GuardrailValidator.redact_secrets(sensitive_text)
+    assert count == 3
+    assert "[REDACTED_GOOGLE_API_KEY]" in scrubbed
+    assert "[REDACTED_GITHUB_TOKEN]" in scrubbed
+    assert "[REDACTED_MONGODB_URI]" in scrubbed
+    assert fake_key not in scrubbed

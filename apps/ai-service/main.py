@@ -160,10 +160,23 @@ async def stream_ai_chat(request: ChatRequest):
 
         return StreamingResponse(rejection_generator(), media_type="text/event-stream")
 
-    # 2. Retrieve Graphify AST Context (Decision 9.2)
+    # 2. Scrub credentials & secrets before inference (Decision 12.2)
+    sanitized_prompt, _ = GuardrailValidator.redact_secrets(request.prompt)
+    sanitized_code, _ = (
+        GuardrailValidator.redact_secrets(request.selected_code)
+        if request.selected_code
+        else (None, 0)
+    )
+    sanitized_error, _ = (
+        GuardrailValidator.redact_secrets(request.terminal_error)
+        if request.terminal_error
+        else (None, 0)
+    )
+
+    # 3. Retrieve Graphify AST Context (Decision 9.2)
     graph_context = graphify_engine.format_graph_context_for_prompt(
         challenge_id=request.challenge_id,
-        query_text=request.prompt,
+        query_text=sanitized_prompt,
         active_file=request.active_file,
     )
 
@@ -177,11 +190,11 @@ async def stream_ai_chat(request: ChatRequest):
 
         async for chunk in gemini_client.stream_socratic_response(
             system_instruction=system_instruction,
-            user_prompt=request.prompt,
+            user_prompt=sanitized_prompt,
             graph_context=graph_context,
             active_file=request.active_file,
-            selected_code=request.selected_code,
-            terminal_error=request.terminal_error,
+            selected_code=sanitized_code,
+            terminal_error=sanitized_error,
         ):
             if chunk["type"] == "token":
                 text = chunk["text"]
