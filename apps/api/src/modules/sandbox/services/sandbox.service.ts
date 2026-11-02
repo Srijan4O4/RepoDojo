@@ -41,8 +41,8 @@ export class SandboxService {
 
     const containerId = `rd_sandbox_${crypto.randomBytes(8).toString('hex')}`;
     const hash = crypto.createHash('md5').update(sessionId).digest('hex');
-    const octet3 = parseInt(hash.substring(0, 2), 16) % 250 + 1;
-    const octet4 = parseInt(hash.substring(2, 4), 16) % 250 + 2;
+    const octet3 = (parseInt(hash.substring(0, 2), 16) % 250) + 1;
+    const octet4 = (parseInt(hash.substring(2, 4), 16) % 250) + 2;
     const bridgeIp = `172.28.${octet3}.${octet4}`;
 
     const now = new Date();
@@ -89,6 +89,13 @@ export class SandboxService {
    */
   public static getSandbox(sessionId: string): SandboxAllocation | undefined {
     return this.sandboxes.get(sessionId);
+  }
+
+  /**
+   * Retrieves all currently allocated sandboxes.
+   */
+  public static getAllAllocations(): SandboxAllocation[] {
+    return Array.from(this.sandboxes.values());
   }
 
   /**

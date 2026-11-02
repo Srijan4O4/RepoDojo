@@ -125,7 +125,7 @@ services:
       retries: 5
 
   # ----------------------------------------------------------------------------
-  # 5. Janitor Daemon (Reclaims Orphaned Sandboxes & Prunes Dangling Resources)
+  # 5. Janitor Daemon (Reclaims Orphaned Sandboxes & Prunes Labeled Resources - SEC-04)
   # ----------------------------------------------------------------------------
   janitor:
     image: docker:27-cli-alpine
@@ -133,11 +133,18 @@ services:
     restart: unless-stopped
     command: >
       sh -c '
-        echo "[Janitor] Started container lifecycle janitor daemon...";
+        echo "[Janitor] Started RepoDojo isolated lifecycle janitor daemon...";
         while true; do
-          docker container prune -f --filter "until=30m" > /dev/null 2>&1;
-          docker volume prune -f --filter "label!=repodojo.keep=true" > /dev/null 2>&1;
-          docker network prune -f > /dev/null 2>&1;
+          # Safely target ONLY containers explicitly labeled as repodojo.session_id
+          for container in $$(docker ps -q -a --filter "label=repodojo.session_id" --filter "status=exited"); do
+            echo "[Janitor] Reclaiming exited RepoDojo container: $$container";
+            docker rm -v "$$container" > /dev/null 2>&1 || true;
+          done;
+          # Safely target ONLY volumes explicitly labeled with repodojo.session_id
+          for vol in $$(docker volume ls -q --filter "label=repodojo.session_id"); do
+            echo "[Janitor] Reclaiming orphaned RepoDojo volume: $$vol";
+            docker volume rm "$$vol" > /dev/null 2>&1 || true;
+          done;
           sleep 600;
         done
       '
