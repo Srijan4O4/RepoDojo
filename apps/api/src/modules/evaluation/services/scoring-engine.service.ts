@@ -43,10 +43,95 @@ export interface ScoringEngineInput {
 
 export class ScoringEngineService {
   /**
+   * Validates scoring engine inputs against strict schema and integrity rules (PRD §10).
+   */
+  public static validateInput(input: ScoringEngineInput): void {
+    if (!input) {
+      throw new Error('Scoring engine input is required.');
+    }
+    if (!input.sessionId || !input.candidateId) {
+      throw new Error('Session ID and Candidate ID are required for scoring.');
+    }
+    if (!input.functionalReport) {
+      throw new Error('Functional report is required for evaluation.');
+    }
+
+    const { functionalReport, staticAnalysisReport, trajectoryInput } = input;
+
+    // Validate Baseline regressions
+    if (
+      !Number.isInteger(functionalReport.baselinePassed) ||
+      functionalReport.baselinePassed < 0 ||
+      !Number.isInteger(functionalReport.baselineTotal) ||
+      functionalReport.baselineTotal < 0
+    ) {
+      throw new Error('Baseline test counts must be non-negative integers.');
+    }
+    if (functionalReport.baselinePassed > functionalReport.baselineTotal) {
+      throw new Error('Baseline passed assertions cannot exceed total baseline assertions.');
+    }
+
+    // Validate Defects
+    const defectIds = new Set<string>();
+    for (const d of functionalReport.defects || []) {
+      if (!d.defectId || typeof d.defectId !== 'string') {
+        throw new Error('Each defect in functional report must have a valid defectId.');
+      }
+      if (defectIds.has(d.defectId)) {
+        throw new Error(`Duplicate defect ID "${d.defectId}" detected in functional report.`);
+      }
+      defectIds.add(d.defectId);
+
+      if (
+        !Number.isInteger(d.assertionsPassed) ||
+        d.assertionsPassed < 0 ||
+        !Number.isInteger(d.totalAssertions) ||
+        d.totalAssertions < 0
+      ) {
+        throw new Error(`Assertion counts for defect "${d.defectId}" must be non-negative integers.`);
+      }
+      if (d.assertionsPassed > d.totalAssertions) {
+        throw new Error(
+          `Assertions passed (${d.assertionsPassed}) cannot exceed total assertions (${d.totalAssertions}) for defect "${d.defectId}".`
+        );
+      }
+    }
+
+    // Validate Static Analysis if provided
+    if (staticAnalysisReport) {
+      if (
+        !Number.isInteger(staticAnalysisReport.lintErrors) ||
+        staticAnalysisReport.lintErrors < 0 ||
+        !Number.isInteger(staticAnalysisReport.typeErrors) ||
+        staticAnalysisReport.typeErrors < 0 ||
+        !Number.isInteger(staticAnalysisReport.maxFunctionComplexity) ||
+        staticAnalysisReport.maxFunctionComplexity < 0
+      ) {
+        throw new Error('Static analysis counts must be non-negative integers.');
+      }
+    }
+
+    // Validate Trajectory Input if provided
+    if (trajectoryInput) {
+      if (
+        trajectoryInput.testsRunCount < 0 ||
+        trajectoryInput.revisionsCount < 0 ||
+        trajectoryInput.totalTokensUsed < 0 ||
+        trajectoryInput.guardrailsTriggeredCount < 0 ||
+        trajectoryInput.aiTurnsCount < 0
+      ) {
+        throw new Error('Trajectory telemetry counts cannot be negative.');
+      }
+    }
+  }
+
+  /**
    * Deterministically calculates the 3-pillar evaluation score (0-100)
    * in strict compliance with ADR-001 Decision 10.2.
    */
   public static calculateEvaluation(input: ScoringEngineInput): Omit<EvaluationResult, 'id'> {
+    this.validateInput(input);
+
     const {
       sessionId,
       assessmentId,
@@ -110,7 +195,7 @@ export class ScoringEngineService {
 
     const functionalScore = Math.min(
       60,
-      Math.round((defectsTotalScore + baselineRegressionScore) * 10) / 10
+      Math.max(0, Math.round((defectsTotalScore + baselineRegressionScore) * 10) / 10)
     );
 
     // 2. Pillar 2: Code Quality and Architecture (0 - 20 Points)
@@ -140,9 +225,10 @@ export class ScoringEngineService {
 
     const codeQualityScore = Math.min(
       20,
-      Math.round(
-        (staticAnalysisScore + maintainabilityScore + architectureComplianceScore) * 10
-      ) / 10
+      Math.max(
+        0,
+        Math.round((staticAnalysisScore + maintainabilityScore + architectureComplianceScore) * 10) / 10
+      )
     );
 
     // 3. Pillar 3: Engineering Trajectory & Responsible AI Usage (0 - 20 Points)
@@ -181,9 +267,10 @@ export class ScoringEngineService {
 
     const engineeringTrajectoryScore = Math.min(
       20,
-      Math.round(
-        (verificationDisciplineScore + aiAssistanceEfficiencyScore + iterativeDebuggingScore) * 10
-      ) / 10
+      Math.max(
+        0,
+        Math.round((verificationDisciplineScore + aiAssistanceEfficiencyScore + iterativeDebuggingScore) * 10) / 10
+      )
     );
 
     // Total Normalized Score (0 - 100)
@@ -191,9 +278,7 @@ export class ScoringEngineService {
       100,
       Math.max(
         0,
-        Math.round(
-          (functionalScore + codeQualityScore + engineeringTrajectoryScore) * 10
-        ) / 10
+        Math.round((functionalScore + codeQualityScore + engineeringTrajectoryScore) * 10) / 10
       )
     );
 

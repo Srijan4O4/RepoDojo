@@ -15,6 +15,7 @@ export interface IUser extends Document {
   avatarUrl?: string;
   role: UserRole;
   refreshTokens: IRefreshToken[];
+  revokedTokenHashes?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,6 +38,7 @@ const UserSchema = new Schema<IUser>(
     avatarUrl: { type: String },
     role: { type: String, enum: ['candidate', 'admin'], default: 'candidate', required: true },
     refreshTokens: [RefreshTokenSchema],
+    revokedTokenHashes: [{ type: String, index: true }],
   },
   {
     timestamps: true,

@@ -37,24 +37,34 @@ export function getLanguageFromPath(filePath: string): string {
   }
 }
 
-export function computeLineDiff(original: string, modified: string): { additions: number; deletions: number } {
+export function computeLineDiff(
+  original: string,
+  modified: string,
+): { additions: number; deletions: number } {
   const origLines = original.split('\n');
   const modLines = modified.split('\n');
 
-  let additions = 0;
-  let deletions = 0;
+  const m = origLines.length;
+  const n = modLines.length;
 
-  // Simple quick diff count for UI indicators
-  const origSet = new Set(origLines);
-  const modSet = new Set(modLines);
+  // Space-optimized LCS: O(min(m, n)) memory
+  const prev = new Int32Array(n + 1);
+  const curr = new Int32Array(n + 1);
 
-  for (const line of modLines) {
-    if (!origSet.has(line)) additions++;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (origLines[i - 1] === modLines[j - 1]) {
+        curr[j] = prev[j - 1] + 1;
+      } else {
+        curr[j] = Math.max(prev[j], curr[j - 1]);
+      }
+    }
+    prev.set(curr);
   }
 
-  for (const line of origLines) {
-    if (!modSet.has(line)) deletions++;
-  }
-
-  return { additions, deletions };
+  const lcsLength = curr[n];
+  return {
+    deletions: m - lcsLength,
+    additions: n - lcsLength,
+  };
 }

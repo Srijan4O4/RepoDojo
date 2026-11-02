@@ -3,8 +3,8 @@ import { AssessmentModel } from '../../assessment/models/assessment.model.js';
 
 export class JanitorService {
   /**
-   * Reconciles active sandboxes against database session leases (Decision 6.5).
-   * Automatically destroys orphaned or expired sandboxes to free CPU and memory.
+   * Reconciles active sandboxes against database session leases (Decision 6.5 & SEC-04).
+   * Safely reclaims orphaned or expired sandboxes without broad host prunes.
    */
   public static async sweepOrphanedSandboxes(): Promise<{
     inspectedCount: number;
@@ -22,10 +22,21 @@ export class JanitorService {
     const activeSessionMap = new Map<string, Date | undefined>();
     activeSessions.forEach((s) => activeSessionMap.set(s._id.toString(), s.expiresAt));
 
-    // Inspect each allocated sandbox
-    // For each sandbox in registry:
-    // If not in activeSessionMap, or if now >= expiresAt, terminate it!
-    // Note: SandboxService.sandboxes is accessed via terminate
+    const allocations = SandboxService.getAllAllocations();
+    inspectedCount = allocations.length;
+
+    for (const alloc of allocations) {
+      const dbExpiresAt = activeSessionMap.get(alloc.sessionId);
+      const isStillActive = activeSessionMap.has(alloc.sessionId);
+      const isExpired = alloc.expiresAt && now.getTime() >= alloc.expiresAt.getTime();
+      const isDbExpired = dbExpiresAt && now.getTime() >= dbExpiresAt.getTime();
+
+      if (!isStillActive || isExpired || isDbExpired) {
+        await SandboxService.terminateSandbox(alloc.sessionId, 'TIMED_OUT');
+        reclaimedCount++;
+      }
+    }
+
     return { inspectedCount, reclaimedCount };
   }
 }

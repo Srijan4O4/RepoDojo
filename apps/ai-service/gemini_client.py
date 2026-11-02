@@ -26,6 +26,10 @@ class GeminiClient:
             except Exception as e:
                 print(f"[GeminiClient] Failed to initialize Google GenAI SDK: {e}")
 
+    def is_configured(self) -> bool:
+        """Returns True if Gemini API client has valid non-test configuration."""
+        return bool(self._client or (self.api_key and not self.api_key.startswith("test-")))
+
     async def stream_socratic_response(
         self,
         system_instruction: str,

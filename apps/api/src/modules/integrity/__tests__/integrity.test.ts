@@ -328,5 +328,42 @@ describe('Domain 15: Assessment Integrity & Proctoring Telemetry', () => {
 
       expect(res.status).toBe(403);
     });
+
+    it('should reject batch telemetry containing mixed session IDs (SEC-06)', async () => {
+      const candidate = await UserModel.create({
+        email: 'batch.cand@repodojo.com',
+        name: 'Batch Cand',
+        role: 'candidate',
+      });
+      const token = TokenService.generateAccessToken(candidate);
+
+      const session1 = await AssessmentModel.create({
+        candidateId: candidate._id,
+        challengeId: 'node-ecommerce-01',
+        status: 'IN_PROGRESS',
+      });
+      const otherSessionId = new mongoose.Types.ObjectId().toString();
+
+      const events = [
+        {
+          sessionId: session1._id.toString(),
+          assessmentId: 'node-ecommerce-01',
+          eventType: 'FOCUS_CHANGE' as const,
+        },
+        {
+          sessionId: otherSessionId,
+          assessmentId: 'node-ecommerce-01',
+          eventType: 'PASTE_EVENT' as const,
+        },
+      ];
+
+      const res = await request(app)
+        .post('/api/integrity/events')
+        .set('Cookie', [`access_token=${token}`])
+        .send({ events });
+
+      expect(res.status).toBe(500);
+      expect(res.body.message).toContain('Cross-session telemetry injection detected');
+    });
   });
 });

@@ -9,6 +9,7 @@ import { TokenService } from '../../auth/services/token.service.js';
 import { AssessmentModel } from '../models/assessment.model.js';
 import { OutboxJobModel } from '../models/outbox-job.model.js';
 import { AssessmentLifecycleService } from '../services/assessment-lifecycle.service.js';
+import { OutboxDispatcherService } from '../services/outbox-dispatcher.service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -329,6 +330,33 @@ describe('Domain 4: Assessment Lifecycle Management', () => {
 
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('FORBIDDEN');
+    });
+
+    it('OutboxDispatcherService should pick up PENDING outbox job and mark DISPATCHED', async () => {
+      const candidate = await UserModel.create({
+        email: 'outbox.cand@repodojo.com',
+        name: 'Outbox Candidate',
+        role: 'candidate',
+      });
+      const session = await AssessmentLifecycleService.createSession({
+        candidateId: candidate._id.toString(),
+        challengeId: 'challenge-alpha',
+      });
+      await AssessmentLifecycleService.startSession(session._id.toString(), candidate._id.toString());
+      await AssessmentLifecycleService.submitSession(session._id.toString(), candidate._id.toString());
+
+      const outbox = await OutboxJobModel.findOne({ assessmentId: session._id });
+      expect(outbox?.status).toBe('PENDING');
+
+      const dispatchedCount = await OutboxDispatcherService.dispatchPendingJobs();
+      expect(dispatchedCount).toBe(1);
+
+      const updatedJob = await OutboxJobModel.findOne({ assessmentId: session._id });
+      expect(updatedJob?.status).toBe('DISPATCHED');
+      expect(updatedJob?.attempts).toBe(1);
+
+      const reloadedSession = await AssessmentModel.findById(session._id);
+      expect(reloadedSession?.status).toBe('COMPLETED');
     });
   });
 });
