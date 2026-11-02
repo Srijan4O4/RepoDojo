@@ -11,6 +11,8 @@ import type { HealthCheckResponse } from '@repodojo/shared';
 import { configurePassport } from './modules/auth/services/passport.service.js';
 import { authRouter } from './modules/auth/routes/auth.routes.js';
 import { assessmentRouter } from './modules/assessment/routes/assessment.routes.js';
+import { challengeRouter } from './modules/challenge/routes/challenge.routes.js';
+import { workspaceRouter } from './modules/sandbox/routes/sandbox.routes.js';
 
 dotenv.config();
 
@@ -46,6 +48,9 @@ app.use(pinoHttp({ logger }));
 // =============================================================================
 app.use('/api/auth', authRouter);
 app.use('/api/assessments', assessmentRouter);
+app.use('/api/challenges', challengeRouter);
+app.use('/api/workspace', workspaceRouter);
+app.use('/api/sandboxes', workspaceRouter);
 
 // =============================================================================
 // Domain 13: 3-Stage Health Probes
