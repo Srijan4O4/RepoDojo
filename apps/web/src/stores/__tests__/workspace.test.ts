@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useWorkspaceStore } from '../workspace.store.js';
+import { computeLineDiff } from '../../utils/language.utils.js';
 
 describe('Domain 7: Candidate Web IDE Workspace Store', () => {
   beforeEach(() => {
@@ -105,5 +106,19 @@ describe('Domain 7: Candidate Web IDE Workspace Store', () => {
     // Candidate edits must NOT be clobbered
     const state = useWorkspaceStore.getState();
     expect(state.files[testPath].content).toBe('local candidate work in progress');
+  });
+
+  it('should compute line diff accurately without collapsing duplicate lines via LCS', () => {
+    const orig = 'line 1\n\nline 2\n\nline 3';
+    const mod = 'line 1\n\nline 2 (edited)\n\nline 3\n\nline 4';
+    const diff = computeLineDiff(orig, mod);
+    expect(diff.deletions).toBe(1);
+    expect(diff.additions).toBe(3);
+  });
+
+  it('should set and retrieve sessionId for active workspace', () => {
+    const { setSessionId } = useWorkspaceStore.getState();
+    setSessionId('test-sess-1234');
+    expect(useWorkspaceStore.getState().sessionId).toBe('test-sess-1234');
   });
 });

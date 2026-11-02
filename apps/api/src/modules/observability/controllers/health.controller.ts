@@ -1,9 +1,59 @@
+import net from 'net';
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import type { HealthCheckResponse } from '@repodojo/shared';
 
 const START_TIME = Date.now();
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000';
+
+async function pingRedis(redisUrl?: string): Promise<{ status: 'up' | 'down'; latencyMs: number }> {
+  if (!redisUrl) {
+    return {
+      status: process.env.NODE_ENV === 'production' ? 'down' : 'up',
+      latencyMs: 0,
+    };
+  }
+
+  const start = Date.now();
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(redisUrl);
+      const host = parsed.hostname || '127.0.0.1';
+      const port = Number(parsed.port) || 6379;
+      const socket = net.createConnection({ host, port, timeout: 1000 });
+
+      let answered = false;
+      const finish = (status: 'up' | 'down') => {
+        if (answered) return;
+        answered = true;
+        socket.destroy();
+        resolve({ status, latencyMs: Date.now() - start });
+      };
+
+      socket.on('connect', () => {
+        if (parsed.password) {
+          socket.write(`AUTH ${parsed.password}\r\nPING\r\n`);
+        } else {
+          socket.write('PING\r\n');
+        }
+      });
+
+      socket.on('data', (data) => {
+        const text = data.toString();
+        if (text.includes('+PONG') || text.includes('+OK')) {
+          finish('up');
+        } else {
+          finish('down');
+        }
+      });
+
+      socket.on('error', () => finish('down'));
+      socket.on('timeout', () => finish('down'));
+    } catch {
+      resolve({ status: 'down', latencyMs: Date.now() - start });
+    }
+  });
+}
 
 export class HealthController {
   /**
@@ -53,10 +103,11 @@ export class HealthController {
     }
 
     // Check Redis / Queue
-    dependencies.redis = {
-      status: 'up',
-      latencyMs: 1,
-    };
+    const redisCheck = await pingRedis(process.env.REDIS_URL);
+    dependencies.redis = redisCheck;
+    if (redisCheck.status === 'down' && process.env.NODE_ENV === 'production') {
+      isHealthy = false;
+    }
 
     // Check Python AI Service (with timeout)
     const aiStart = Date.now();

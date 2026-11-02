@@ -31,7 +31,7 @@ jobs:
       - name: Setup Node.js 22 & pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 12.16.1
 
       - name: Setup Node.js LTS
         uses: actions/setup-node@v4
@@ -40,7 +40,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Node Dependency Vulnerability Audit
-        run: pnpm audit --audit-level=high || true
+        run: pnpm audit --audit-level=high
 
   # ============================================================================
   # 2. Quality Gate: Linting & Static Typing (ADR 2.3)
@@ -55,13 +55,13 @@ jobs:
       - name: Setup Node.js 22 & pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 12.16.1
 
       - name: Setup Python 3.12 & uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
-          python-version: "3.12"
+          version: 'latest'
+          python-version: '3.12'
 
       - name: Install Monorepo Node Dependencies
         run: pnpm install --frozen-lockfile
@@ -96,13 +96,13 @@ jobs:
       - name: Setup Node.js 22 & pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 12.16.1
 
       - name: Setup Python 3.12 & uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
-          python-version: "3.12"
+          version: 'latest'
+          python-version: '3.12'
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
@@ -136,7 +136,7 @@ jobs:
       - name: Setup Node.js 22 & pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 12.16.1
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile

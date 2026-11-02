@@ -1,8 +1,14 @@
 import { create } from 'zustand';
-import { WorkspaceFile, SyncStatus, EditorViewMode, FileDiffSummary } from '../types/workspace.types.js';
+import {
+  WorkspaceFile,
+  SyncStatus,
+  EditorViewMode,
+  FileDiffSummary,
+} from '../types/workspace.types.js';
 import { getLanguageFromPath, computeLineDiff } from '../utils/language.utils.js';
 
 interface WorkspaceState {
+  sessionId: string | null;
   files: Record<string, WorkspaceFile>;
   openTabs: string[];
   activeFilePath: string | null;
@@ -13,6 +19,8 @@ interface WorkspaceState {
   searchQuery: string;
 
   // Actions
+  setSessionId: (sessionId: string | null) => void;
+  fetchWorkspaceFiles: (sessionId: string) => Promise<void>;
   openFile: (path: string) => void;
   closeTab: (path: string) => void;
   setActiveFile: (path: string) => void;
@@ -86,6 +94,7 @@ const INITIAL_FILES: Record<string, WorkspaceFile> = {
 const saveTimers: Record<string, NodeJS.Timeout> = {};
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
+  sessionId: null,
   files: INITIAL_FILES,
   openTabs: ['src/controllers/order.controller.ts', 'src/services/payment.service.ts'],
   activeFilePath: 'src/controllers/order.controller.ts',
@@ -97,6 +106,66 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     state: 'saved',
     pendingChangesCount: 0,
     lastSavedAt: new Date(),
+  },
+
+  setSessionId: (sessionId) => set({ sessionId }),
+
+  fetchWorkspaceFiles: async (sessionId: string) => {
+    set((state) => ({
+      sessionId,
+      syncStatus: { ...state.syncStatus, state: 'saving' },
+    }));
+
+    try {
+      const treeRes = await fetch(`/api/workspace/${sessionId}/tree`);
+      if (!treeRes.ok) throw new Error('Failed to fetch workspace tree');
+      const treeData = await treeRes.json();
+      const treeFiles: Array<{ path: string }> = treeData.files || [];
+
+      const newFiles: Record<string, WorkspaceFile> = {};
+      for (const item of treeFiles) {
+        try {
+          const fileRes = await fetch(
+            `/api/workspace/${sessionId}/file?path=${encodeURIComponent(item.path)}`,
+          );
+          if (fileRes.ok) {
+            const fileData = await fileRes.json();
+            const language = getLanguageFromPath(item.path);
+            const name = item.path.split('/').pop() || item.path;
+            newFiles[item.path] = {
+              path: item.path,
+              name,
+              language,
+              content: fileData.content || '',
+              originalContent: fileData.content || '',
+              isModified: false,
+              isSaved: true,
+              revision: fileData.revision || 1,
+            };
+          }
+        } catch {
+          // Skip individual failed file fetch
+        }
+      }
+
+      if (Object.keys(newFiles).length > 0) {
+        const firstPath = Object.keys(newFiles)[0];
+        set({
+          files: newFiles,
+          openTabs: [firstPath],
+          activeFilePath: firstPath,
+          syncStatus: {
+            state: 'saved',
+            pendingChangesCount: 0,
+            lastSavedAt: new Date(),
+          },
+        });
+      }
+    } catch {
+      set((state) => ({
+        syncStatus: { ...state.syncStatus, state: 'error' },
+      }));
+    }
   },
 
   openFile: (path: string) => {
@@ -195,7 +264,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   saveFile: async (path: string) => {
-    const { files, workspaceRevision } = get();
+    const { files, workspaceRevision, sessionId } = get();
     const file = files[path];
     if (!file) return;
 
@@ -204,8 +273,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       delete saveTimers[path];
     }
 
-    // Persist to container / gateway
-    const nextRevision = workspaceRevision + 1;
+    let nextRevision = workspaceRevision + 1;
+
+    if (sessionId) {
+      try {
+        const res = await fetch(`/api/workspace/${sessionId}/file`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, content: file.content }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.revision) nextRevision = data.revision;
+        }
+      } catch (err) {
+        console.error('Failed to persist file to workspace API:', err);
+      }
+    }
 
     set((state) => ({
       files: {
