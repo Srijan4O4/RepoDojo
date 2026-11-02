@@ -11,6 +11,7 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@repodojo/shared": "workspace:*",
     "@tanstack/react-query": "^5.66.0",
     "clsx": "^2.1.1",

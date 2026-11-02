@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/changes/changespanel.tsx","./src/components/editor/codeeditor.tsx","./src/components/editor/diffviewer.tsx","./src/components/editor/tabbar.tsx","./src/components/filetree/filetree.tsx","./src/components/problems/problemspanel.tsx","./src/components/workspace/workspacelayout.tsx","./src/stores/workspace.store.ts","./src/stores/__tests__/workspace.test.ts","./src/types/workspace.types.ts","./src/utils/language.utils.ts"],"version":"5.9.3"}
