@@ -127,3 +127,27 @@ def test_ai_chat_stream_rejects_adversarial_prompt(client):
     assert response.status_code == 200
     body = response.text
     assert "PROMPT_INJECTION_DETECTED" in body
+
+
+def test_report_synthesis_endpoint(client):
+    payload = {
+        "session_id": "test-session-123",
+        "challenge_id": "node-ecommerce-01",
+        "total_score": 82.5,
+        "functional_score": 48.0,
+        "quality_score": 17.5,
+        "trajectory_score": 17.0,
+        "defects_resolved_count": 6,
+        "defects_total_count": 8,
+        "candidate_prompts_count": 4,
+        "tokens_used": 12000,
+    }
+
+    response = client.post("/internal/ai/report/synthesize", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "executive_summary" in data
+    assert len(data["strengths"]) >= 2
+    assert len(data["areas_for_improvement"]) >= 2
+    assert len(data["practice_recommendations"]) >= 2
+    assert "82.5" in data["executive_summary"]

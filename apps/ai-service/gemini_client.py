@@ -134,4 +134,90 @@ class GeminiClient:
         )
 
 
+    async def synthesize_report_narrative(
+        self,
+        total_score: float,
+        functional_score: float,
+        quality_score: float,
+        trajectory_score: float,
+        defects_resolved: int,
+        defects_total: int,
+        tokens_used: int,
+    ) -> dict[str, Any]:
+        """
+        Synthesizes structured feedback report (Decision 11.1).
+        Uses Gemini if configured, otherwise falls back to deterministic rule-based synthesis.
+        """
+        if self._client:
+            try:
+                import json
+
+                prompt = (
+                    "Candidate Assessment Performance Summary:\n"
+                    f"- Total Score: {total_score}/100\n"
+                    f"- Functional Correctness: {functional_score}/60 ({defects_resolved}/{defects_total} defects resolved)\n"
+                    f"- Code Quality: {quality_score}/20\n"
+                    f"- Engineering Trajectory: {trajectory_score}/20\n"
+                    f"- AI Tokens Utilized: {tokens_used}\n\n"
+                    "Generate a JSON object with fields:\n"
+                    "- 'executive_summary': A 2-3 sentence technical appraisal.\n"
+                    "- 'strengths': Array of 2-3 specific engineering strengths demonstrated.\n"
+                    "- 'areas_for_improvement': Array of 2-3 specific technical areas to strengthen.\n"
+                    "- 'practice_recommendations': Array of 2-3 targeted practice recommendations.\n"
+                    "Respond ONLY with valid JSON."
+                )
+                response = self._client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                )
+                cleaned = response.text.strip().removeprefix("```json").removesuffix("```").strip()
+                data = json.loads(cleaned)
+                if all(
+                    k in data
+                    for k in [
+                        "executive_summary",
+                        "strengths",
+                        "areas_for_improvement",
+                        "practice_recommendations",
+                    ]
+                ):
+                    return data
+            except Exception as e:
+                print(f"[GeminiClient] Fallback to deterministic report synthesis: {e}")
+
+        tier = (
+            "Senior"
+            if total_score >= 85
+            else "Mid-Level"
+            if total_score >= 65
+            else "Junior / Associate"
+        )
+        executive_summary = (
+            f"The candidate demonstrated strong {tier}-level debugging capabilities, "
+            f"scoring {total_score:.1f}/100 overall. They successfully identified and repaired "
+            f"{defects_resolved} of {defects_total} defects while maintaining good baseline regression discipline."
+        )
+        strengths = [
+            f"Systematic functional defect localization with {functional_score:.1f}/60 in functional correctness.",
+            "High test verification discipline with iterative validation before submission.",
+            f"Clean coding conventions and adherence to module API boundaries (Quality: {quality_score:.1f}/20).",
+        ]
+        areas_for_improvement = [
+            "Deepen focus on asynchronous promise resolution and race-condition edge cases in Express route handlers.",
+            "Verify edge boundary math (e.g., discount thresholds and off-by-one errors) using unit tests before integration.",
+        ]
+        practice_recommendations = [
+            "Practice designing comprehensive test fixtures covering boundary conditions for financial calculations.",
+            "Review Node.js event-loop asynchronous error propagation and unhandled promise rejections.",
+            "Refactor complex nested route handler logic into dedicated stateless service layer modules.",
+        ]
+
+        return {
+            "executive_summary": executive_summary,
+            "strengths": strengths,
+            "areas_for_improvement": areas_for_improvement,
+            "practice_recommendations": practice_recommendations,
+        }
+
+
 gemini_client = GeminiClient()

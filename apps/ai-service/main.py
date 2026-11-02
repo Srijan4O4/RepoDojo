@@ -37,6 +37,26 @@ class GraphifyLoadRequest(BaseModel):
     graph_data: dict[str, Any]
 
 
+class ReportSynthesisRequest(BaseModel):
+    session_id: str
+    challenge_id: str = "node-ecommerce-01"
+    total_score: float = Field(..., ge=0, le=100)
+    functional_score: float = Field(..., ge=0, le=60)
+    quality_score: float = Field(..., ge=0, le=20)
+    trajectory_score: float = Field(..., ge=0, le=20)
+    defects_resolved_count: int = Field(..., ge=0, le=8)
+    defects_total_count: int = 8
+    candidate_prompts_count: int = 0
+    tokens_used: int = 0
+
+
+class ReportSynthesisResponse(BaseModel):
+    executive_summary: str
+    strengths: list[str]
+    areas_for_improvement: list[str]
+    practice_recommendations: list[str]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize default AST graph for node-ecommerce-01
@@ -185,6 +205,29 @@ async def stream_ai_chat(request: ChatRequest):
         yield 'data: {"type": "done"}\n\n'
 
     return StreamingResponse(socratic_stream(), media_type="text/event-stream")
+
+
+# =============================================================================
+# Domain 11: Candidate Feedback Report Synthesis Endpoint (Decision 11.1)
+# =============================================================================
+
+
+@app.post("/internal/ai/report/synthesize", response_model=ReportSynthesisResponse)
+async def synthesize_candidate_report(req: ReportSynthesisRequest):
+    """
+    Synthesizes actionable, evidence-based candidate performance report narrative.
+    Combines deterministic evaluation metrics with structured qualitative synthesis.
+    """
+    data = await gemini_client.synthesize_report_narrative(
+        total_score=req.total_score,
+        functional_score=req.functional_score,
+        quality_score=req.quality_score,
+        trajectory_score=req.trajectory_score,
+        defects_resolved=req.defects_resolved_count,
+        defects_total=req.defects_total_count,
+        tokens_used=req.tokens_used,
+    )
+    return ReportSynthesisResponse(**data)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ import { assessmentRouter } from './modules/assessment/routes/assessment.routes.
 import { challengeRouter } from './modules/challenge/routes/challenge.routes.js';
 import { workspaceRouter } from './modules/sandbox/routes/sandbox.routes.js';
 import { aiRouter } from './modules/ai/routes/ai.routes.js';
+import { evaluationRouter } from './modules/evaluation/routes/evaluation.routes.js';
+import { reportRouter } from './modules/report/routes/report.routes.js';
 
 dotenv.config();
 
@@ -53,6 +55,8 @@ app.use('/api/challenges', challengeRouter);
 app.use('/api/workspace', workspaceRouter);
 app.use('/api/sandboxes', workspaceRouter);
 app.use('/api/ai', aiRouter);
+app.use('/api/evaluations', evaluationRouter);
+app.use('/api/reports', reportRouter);
 
 // =============================================================================
 // Domain 13: 3-Stage Health Probes
