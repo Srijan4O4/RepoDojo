@@ -1,10 +1,15 @@
 import express, { Request, Response } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import pino from 'pino';
 import { pinoHttp } from 'pino-http';
+import passport from 'passport';
+import mongoose from 'mongoose';
 import type { HealthCheckResponse } from '@repodojo/shared';
+import { configurePassport } from './modules/auth/services/passport.service.js';
+import { authRouter } from './modules/auth/routes/auth.routes.js';
 
 dotenv.config();
 
@@ -15,9 +20,12 @@ const logger = pino({
   },
 });
 
-const app = express();
+export const app = express();
 const port = process.env.PORT || 5000;
 const startTime = Date.now();
+
+// Configure Passport Strategies
+configurePassport();
 
 // Security & Parsing Middleware
 app.use(helmet());
@@ -27,8 +35,15 @@ app.use(
     credentials: true,
   }),
 );
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
+app.use(passport.initialize());
 app.use(pinoHttp({ logger }));
+
+// =============================================================================
+// Feature Modules (Domain 3: Auth)
+// =============================================================================
+app.use('/api/auth', authRouter);
 
 // =============================================================================
 // Domain 13: 3-Stage Health Probes
@@ -65,6 +80,20 @@ app.get('/', (_req: Request, res: Response) => {
   res.json({ message: 'RepoDojo API Server', version: '0.4.0', status: 'operational' });
 });
 
-app.listen(port, () => {
-  logger.info(`RepoDojo API running on port ${port} (Node.js ${process.version})`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  const mongoUri = process.env.MONGODB_URI;
+  if (mongoUri) {
+    mongoose
+      .connect(mongoUri)
+      .then(() => {
+        logger.info('Connected to MongoDB');
+      })
+      .catch((err) => {
+        logger.error({ err }, 'Failed to connect to MongoDB');
+      });
+  }
+
+  app.listen(port, () => {
+    logger.info(`RepoDojo API running on port ${port} (Node.js ${process.version})`);
+  });
+}
