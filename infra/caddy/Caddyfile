@@ -64,12 +64,6 @@
     }
   }
 
-  # Python AI Service Internal Orchestration Gateway (Restricted)
-  handle /ai-internal/* {
-    uri strip_prefix /ai-internal
-    reverse_proxy ai-service:8000
-  }
-
   # SPA Frontend Fallback (Cloudflare Pages Edge proxy or local build)
   handle {
     reverse_proxy https://repodojo.pages.dev {
