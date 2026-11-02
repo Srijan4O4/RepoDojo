@@ -21,6 +21,10 @@
     "infra:down": "docker compose -f infra/docker-compose.dev.yml down",
     "graphify:platform": "node scripts/graphify-platform.js"
   },
+  "overrides": {
+    "dompurify": ">=3.4.17",
+    "tinypool": ">=2.1.2"
+  },
   "devDependencies": {
     "prettier": "^3.5.0",
     "turbo": "^2.4.4"

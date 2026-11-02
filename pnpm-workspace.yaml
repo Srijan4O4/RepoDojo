@@ -5,3 +5,7 @@ packages:
 allowBuilds:
   esbuild: true
   mongodb-memory-server: true
+
+overrides:
+  dompurify: '>=3.4.17'
+  tinypool: '>=2.1.2'
