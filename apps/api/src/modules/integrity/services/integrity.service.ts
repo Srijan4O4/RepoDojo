@@ -84,6 +84,7 @@ export class IntegrityService {
 
   /**
    * Ingests a batch of telemetry events.
+   * Validates that all events in batch belong strictly to the candidate's authorized active session (SEC-06).
    */
   public static async recordBatch(
     candidateId: string,
@@ -100,8 +101,16 @@ export class IntegrityService {
       throw new Error('Batch size exceeds maximum limit of 50 events');
     }
 
-    const sessionId = events[0].sessionId;
-    const session = await AssessmentModel.findById(sessionId);
+    const targetSessionId = events[0].sessionId;
+
+    // SEC-06: Reject cross-session telemetry batch injection attempts
+    for (const ev of events) {
+      if (ev.sessionId !== targetSessionId) {
+        throw new Error('Cross-session telemetry injection detected: All events in batch must belong to the same session');
+      }
+    }
+
+    const session = await AssessmentModel.findById(targetSessionId);
     if (!session) {
       throw new Error('Assessment session not found');
     }
@@ -110,8 +119,13 @@ export class IntegrityService {
       throw new Error('Unauthorized: Session does not belong to candidate');
     }
 
+    // Lifecycle state verification: only allow telemetry during active or submitting states
+    if (session.status !== 'IN_PROGRESS' && session.status !== 'SUBMITTING' && session.status !== 'READY') {
+      throw new Error(`Cannot ingest telemetry for session in ${session.status} state`);
+    }
+
     const docs = events.map((ev) => ({
-      sessionId: new mongoose.Types.ObjectId(ev.sessionId),
+      sessionId: session._id,
       assessmentId: ev.assessmentId,
       candidateId: new mongoose.Types.ObjectId(candidateId),
       eventType: ev.eventType,
