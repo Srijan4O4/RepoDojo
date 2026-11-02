@@ -1,0 +1,39 @@
+# ==============================================================================
+# RepoDojo Local Development Supporting Services
+# Run via: pnpm run infra:up
+# Stop via: pnpm run infra:down
+# ==============================================================================
+
+services:
+  # Local MongoDB for platform metadata, users, sessions, evaluations
+  mongodb:
+    image: mongo:7.0
+    container_name: repodojo-dev-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: repodojo_dev
+    volumes:
+      - ./data/mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Local Redis for BullMQ evaluation & report job queues
+  redis:
+    image: redis:7.2-alpine
+    container_name: repodojo-dev-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
