@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import Editor, { OnMount, BeforeMount } from '@monaco-editor/react';
 import { useWorkspaceStore } from '../../stores/workspace.store.js';
+import { useIntegrityStore } from '../../stores/integrity.store.js';
 import { Loader2 } from 'lucide-react';
 
 export function CodeEditor() {
@@ -63,6 +64,15 @@ export function CodeEditor() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       if (activeFilePath) {
         saveFile(activeFilePath);
+      }
+    });
+
+    // Non-invasive bulk paste telemetry listener (Domain 15, Decision 15.1)
+    editor.onDidPaste((e: any) => {
+      if (e?.range) {
+        const lineCount = e.range.endLineNumber - e.range.startLineNumber + 1;
+        const charCount = editor.getModel()?.getValueInRange(e.range)?.length || 0;
+        useIntegrityStore.getState().recordPaste(charCount, lineCount, activeFilePath || 'unknown');
       }
     });
 

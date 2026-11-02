@@ -1,0 +1,101 @@
+# ==============================================================================
+# RepoDojo Edge Reverse Proxy Configuration (Caddy 2)
+# Architecture Decision: ADR 12.1 (5-Zone Segmentation) & ADR 14.1 (OCI Control Plane)
+# ==============================================================================
+
+{
+  email {$ACME_EMAIL:ops@repodojo.com}
+  admin off
+  log {
+    output stdout
+    format json
+  }
+}
+
+# ------------------------------------------------------------------------------
+# 1. Main Platform Domain: repodojo.com & api.repodojo.com
+# ------------------------------------------------------------------------------
+{$DOMAIN:repodojo.com}, api.{$DOMAIN:repodojo.com} {
+  # HTTP Security Headers (PRD §12.1 Platform Security Baseline)
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    X-XSS-Protection "0"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+    Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self' wss: https:;"
+    -Server
+  }
+
+  # Compression
+  encode gzip zstd
+
+  # Observability Health Probes (Direct passthrough to Control Plane API)
+  handle /startupz* {
+    reverse_proxy api:5000
+  }
+
+  handle /livez* {
+    reverse_proxy api:5000
+  }
+
+  handle /readyz* {
+    reverse_proxy api:5000
+  }
+
+  # Real-Time WebSocket Connections (Terminal PTY bridge & AI streaming)
+  handle /ws/* {
+    reverse_proxy api:5000 {
+      header_up Host {host}
+      header_up X-Real-IP {remote_host}
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Forwarded-Proto {scheme}
+    }
+  }
+
+  # Express REST API Routes
+  handle /api/* {
+    reverse_proxy api:5000 {
+      header_up Host {host}
+      header_up X-Real-IP {remote_host}
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Forwarded-Proto {scheme}
+    }
+  }
+
+  # Python AI Service Internal Orchestration Gateway (Restricted)
+  handle /ai-internal/* {
+    uri strip_prefix /ai-internal
+    reverse_proxy ai-service:8000
+  }
+
+  # SPA Frontend Fallback (Cloudflare Pages Edge proxy or local build)
+  handle {
+    reverse_proxy https://repodojo.pages.dev {
+      header_up Host repodojo.pages.dev
+      header_up X-Forwarded-Host {host}
+    }
+  }
+}
+
+# ------------------------------------------------------------------------------
+# 2. Candidate Isolated Previews (*.preview.repodojo-preview.net)
+# Decision 12.1 Zone 1: Public Edge Zone with Dynamic Port Proxy
+# ------------------------------------------------------------------------------
+*.preview.{$PREVIEW_DOMAIN:repodojo-preview.net} {
+  header {
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "ALLOW-FROM {$DOMAIN:repodojo.com}"
+    Content-Security-Policy "frame-ancestors {$DOMAIN:repodojo.com};"
+    -Server
+  }
+
+  encode gzip zstd
+
+  # Forward dynamically to candidate sandbox preview gateway
+  reverse_proxy api:5000 {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+  }
+}

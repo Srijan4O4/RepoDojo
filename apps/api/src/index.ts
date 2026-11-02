@@ -15,6 +15,7 @@ import { workspaceRouter } from './modules/sandbox/routes/sandbox.routes.js';
 import { aiRouter } from './modules/ai/routes/ai.routes.js';
 import { evaluationRouter } from './modules/evaluation/routes/evaluation.routes.js';
 import { reportRouter } from './modules/report/routes/report.routes.js';
+import { integrityRouter } from './modules/integrity/routes/integrity.routes.js';
 import { correlationMiddleware } from './modules/observability/middleware/correlation.middleware.js';
 import { enforceNetworkBoundary } from './modules/security/middleware/network-boundary.middleware.js';
 import { HealthController } from './modules/observability/controllers/health.controller.js';
@@ -51,7 +52,7 @@ app.use(correlationMiddleware);
 app.use(enforceNetworkBoundary);
 
 // =============================================================================
-// Feature Modules (Domains 3, 4, 5, 6, 8, 10, 11)
+// Feature Modules (Domains 3, 4, 5, 6, 8, 10, 11, 15)
 // =============================================================================
 app.use('/api/auth', authRouter);
 app.use('/api/assessments', assessmentRouter);
@@ -61,6 +62,7 @@ app.use('/api/sandboxes', workspaceRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/evaluations', evaluationRouter);
 app.use('/api/reports', reportRouter);
+app.use('/api/integrity', integrityRouter);
 
 // =============================================================================
 // Domain 13: 3-Stage Health Probes & Alert Diagnostics
