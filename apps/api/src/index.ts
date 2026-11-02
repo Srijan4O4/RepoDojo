@@ -88,6 +88,23 @@ app.get('/', (_req: Request, res: Response) => {
 });
 
 if (process.env.NODE_ENV !== 'test') {
+  if (process.env.NODE_ENV === 'production') {
+    const requiredEnv = [
+      'JWT_ACCESS_SECRET',
+      'INTERNAL_SERVICE_KEY',
+      'WORKER_AUTH_SECRET',
+      'MONGODB_URI',
+    ];
+    const missing = requiredEnv.filter((name) => !process.env[name]);
+    if (missing.length > 0) {
+      logger.fatal(
+        { missing },
+        `FATAL: Missing critical production environment variables: ${missing.join(', ')}`,
+      );
+      process.exit(1);
+    }
+  }
+
   const mongoUri = process.env.MONGODB_URI;
   if (mongoUri) {
     mongoose
