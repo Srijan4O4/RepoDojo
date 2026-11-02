@@ -10,6 +10,7 @@
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "dev": "turbo run dev",
+    "dev:standalone": "pnpm --filter @repodojo/api dev:standalone",
     "build": "turbo run build",
     "test": "turbo run test",
     "test:e2e": "pnpm --filter @repodojo/api test:e2e",
