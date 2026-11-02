@@ -50,6 +50,30 @@ export interface AssessmentSession {
   updatedAt: string;
 }
 
+export interface HeartbeatResponse {
+  sessionId: string;
+  status: AssessmentStatus;
+  serverTime: string;
+  remainingSeconds: number;
+  isExpired: boolean;
+}
+
+export type OutboxJobStatus = 'PENDING' | 'DISPATCHED' | 'FAILED';
+
+export interface OutboxJob {
+  id: string;
+  submissionId: string;
+  assessmentId: string;
+  candidateId: string;
+  challengeId: string;
+  payload: Record<string, unknown>;
+  status: OutboxJobStatus;
+  attempts: number;
+  lastAttemptAt?: string;
+  error?: string;
+  createdAt: string;
+}
+
 // =============================================================================
 // Domain 5: Challenge Specification
 // =============================================================================

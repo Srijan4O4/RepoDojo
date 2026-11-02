@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 import type { HealthCheckResponse } from '@repodojo/shared';
 import { configurePassport } from './modules/auth/services/passport.service.js';
 import { authRouter } from './modules/auth/routes/auth.routes.js';
+import { assessmentRouter } from './modules/assessment/routes/assessment.routes.js';
 
 dotenv.config();
 
@@ -44,6 +45,7 @@ app.use(pinoHttp({ logger }));
 // Feature Modules (Domain 3: Auth)
 // =============================================================================
 app.use('/api/auth', authRouter);
+app.use('/api/assessments', assessmentRouter);
 
 // =============================================================================
 // Domain 13: 3-Stage Health Probes
